@@ -1,0 +1,22 @@
+[package]
+name = "marjapussi-rs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+itertools = "0.11.0"
+strum = "0.25.0"
+strum_macros = "0.25.0"
+tokio = { version = "1", features = ["full"] }
+warp = "0.3.5"
+tokio-tungstenite = "*"
+futures-channel = "0.3.28"
+futures-util = "*"
+anyhow = "1.0"
+chrono = "0.4"
+rand = "0.8.5"
+
+[build]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
