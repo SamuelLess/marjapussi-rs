@@ -1,8 +1,9 @@
 use crate::game::cards::{Card, Suit, Value};
 use crate::game::player::PlaceAtTable;
+use serde::Serialize;
 use std::ops::{Add, AddAssign};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct Points(pub i32);
 
 impl Add for Points {

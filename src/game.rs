@@ -3,11 +3,11 @@ use crate::game::errors::GameError;
 use crate::game::gameevent::{
     ActionType, AnswerType, GameAction, GameCallback, GameEvent, QuestionType,
 };
-use crate::game::gamestate::GamePhase;
+use crate::game::gamestate::{FinishedTrick, GamePhase};
 
 use crate::game::cards::{allowed_cards, high_card, Suit};
 use crate::game::player::{create_players, PlaceAtTable, Player, PlayerTrumpPossibilities};
-use crate::game::points::Points;
+use crate::game::points::{points_trick, Points};
 use chrono::offset::Local;
 use chrono::DateTime;
 use itertools::Itertools;
@@ -40,12 +40,18 @@ impl Game {
         let mut game = Game {
             info: GameMetaInfo {
                 name,
-                all_player_names: player_names,
+                player_names: player_names,
                 create_time: current_time_string(),
                 start_time: None,
-                started: false,
+                player_start_cards: [
+                    players[0].cards.clone(),
+                    players[1].cards.clone(),
+                    players[2].cards.clone(),
+                    players[3].cards.clone(),
+                ],
             },
             state: GameState {
+                started: false,
                 players_started: vec![],
                 players_accept_undo: vec![],
                 phase: GamePhase::WaitingForStart,
@@ -56,7 +62,7 @@ impl Game {
                 bidding_players: 4,
                 bidding_history: vec![],
                 players,
-                last_trick: None,
+                all_tricks: vec![],
                 current_trick: vec![],
             },
             legal_actions: vec![],
@@ -196,7 +202,7 @@ impl Game {
                     next_game_state.players_started.push(action.player.clone());
                 }
                 if next_game_state.players_started.len() == 4 {
-                    next_game_meta.started = true;
+                    next_game_state.started = true;
                     next_game_meta.start_time = Some(current_time_string());
                     next_game_state.phase = GamePhase::Bidding;
                 }
@@ -463,10 +469,6 @@ pub fn legal_cards(game: &Game) -> Vec<GameAction> {
 
 pub fn act_card(card: Card, next_game_state: &mut GameState) {
     if next_game_state.current_trick.len() >= 4 {
-        next_game_state.last_trick = Some((
-            next_game_state.current_trick.clone().try_into().unwrap(),
-            next_game_state.player_at_turn.clone(),
-        ));
         next_game_state.current_trick = vec![card];
     } else {
         next_game_state.current_trick.push(card);
@@ -474,6 +476,7 @@ pub fn act_card(card: Card, next_game_state: &mut GameState) {
     next_game_state.phase = GamePhase::Trick;
     next_game_state.player_at_turn = next_game_state.player_at_turn.next();
     if next_game_state.current_trick.len() == 4 {
+        //determine next player
         let mut trick: Vec<&Card> = vec![];
         for c in &next_game_state.current_trick {
             trick.push(c);
@@ -486,6 +489,14 @@ pub fn act_card(card: Card, next_game_state: &mut GameState) {
             next_game_state.player_at_turn = next_game_state.player_at_turn.next();
         }
         next_game_state.phase = GamePhase::StartTrick;
+        //save trick
+        let cards_in_last_trick: [Card; 4] =
+            next_game_state.current_trick.clone().try_into().unwrap();
+        next_game_state.all_tricks.push(FinishedTrick {
+            cards: cards_in_last_trick.clone(),
+            winner: next_game_state.player_at_turn.clone(),
+            points: points_trick(cards_in_last_trick.try_into().unwrap()),
+        });
     }
 }
 

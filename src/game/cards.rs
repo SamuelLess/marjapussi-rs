@@ -9,7 +9,9 @@ use strum_macros::EnumIter;
 
 use itertools::concat;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+use serde::Serialize;
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct Card {
     /**
      * Only compare cards with same color.
@@ -24,7 +26,7 @@ impl fmt::Display for Card {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, EnumIter)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, EnumIter, Serialize)]
 pub enum Suit {
     Green,
     Acorns,
@@ -38,7 +40,7 @@ impl fmt::Display for Suit {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, EnumIter)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, EnumIter, Serialize)]
 pub enum Value {
     Six,
     Seven,

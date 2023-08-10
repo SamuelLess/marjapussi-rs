@@ -2,6 +2,7 @@ use crate::game::cards::{Card, Suit};
 use crate::game::gameevent::ActionType;
 use crate::game::player::{PlaceAtTable, Player};
 use crate::game::points::Points;
+use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GamePhase {
@@ -18,9 +19,17 @@ pub enum GamePhase {
     PendingUndo(Box<GamePhase>),
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct FinishedTrick {
+    pub cards: [Card; 4],
+    pub winner: PlaceAtTable,
+    pub points: Points,
+}
+
 #[derive(Debug, Clone)]
 pub struct GameState {
     pub phase: GamePhase,
+    pub started: bool,
     pub players_started: Vec<PlaceAtTable>,
     pub players_accept_undo: Vec<PlaceAtTable>,
     pub bidding_players: u8, //starts at 4
@@ -30,7 +39,7 @@ pub struct GameState {
     pub player_at_turn: PlaceAtTable,
     pub players: [Player; 4],
     pub value: Points,
-    pub last_trick: Option<([Card; 4], PlaceAtTable)>,
+    pub all_tricks: Vec<FinishedTrick>,
     pub current_trick: Vec<Card>,
 }
 

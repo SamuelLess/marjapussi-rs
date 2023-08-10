@@ -4,15 +4,14 @@
 mod game;
 mod tests;
 
+use crate::game::gameinfo::GameInfoDatabase;
+use crate::game::gamestate::GamePhase;
 use crate::game::Game;
 use crate::tests::game::test_random_game_random;
 use std::io;
 
 fn main() {
-    //test_play().await;
-    for _ in 0..1000 {
-        test_random_game_random();
-    }
+    test_play();
 }
 
 fn test_play() {
@@ -29,7 +28,7 @@ fn test_play() {
         None,
     );
     let mut actions = game.legal_actions();
-    loop {
+    while game.state.phase != GamePhase::Ended {
         print!("{}[2J", 27 as char);
         println!(
             "Phase: {:?}, Player: {:?}",
@@ -67,4 +66,11 @@ fn test_play() {
         game = res.ok().unwrap();
         actions = game.legal_actions();
     }
+    //println!("{:#?}", GameInfoDatabase::from(game));
+    println!(
+        "{}",
+        serde_json::to_string(&GameInfoDatabase::from(game))
+            .ok()
+            .unwrap()
+    );
 }

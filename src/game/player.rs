@@ -1,9 +1,10 @@
 use crate::game::cards::{get_all_cards, Card};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use serde::Serialize;
 use std::fmt::Debug;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PlaceAtTable(pub u8);
 
 impl PlaceAtTable {
@@ -17,6 +18,9 @@ impl PlaceAtTable {
 
     pub fn prev(&self) -> Self {
         PlaceAtTable((self.0 + 3) % 4)
+    }
+    pub(crate) fn party(&self) -> Self {
+        PlaceAtTable(self.0 % 2)
     }
 }
 
