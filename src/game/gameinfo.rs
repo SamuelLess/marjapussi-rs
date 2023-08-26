@@ -11,6 +11,7 @@ pub struct GameMetaInfo {
     pub name: String,
     pub create_time: String,
     pub start_time: Option<String>,
+    pub end_time: Option<String>,
     pub player_names: [String; 4],
     pub player_start_cards: [Vec<Card>; 4],
 }

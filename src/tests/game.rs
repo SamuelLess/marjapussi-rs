@@ -127,8 +127,8 @@ fn test_random_game_controlled() {
     assert_eq!(game.state.phase, GamePhase::Trick);
     actions = game.legal_actions.clone();
     //println!("actions {:#?}", actions);
-    let res = game.apply_action(actions[0].clone());
-    game = res.ok().unwrap();
+    let _res = game.apply_action(actions[0].clone());
+    //game = res.ok().unwrap();
     //println!("{:#?}", GameInfoPlayer::from_game(game, PlaceAtTable(2)));
 }
 

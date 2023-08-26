@@ -18,6 +18,7 @@ pub mod errors;
 pub mod gameevent;
 pub mod gameinfo;
 pub mod gamestate;
+pub mod parse;
 pub mod player;
 pub mod points;
 
@@ -40,7 +41,7 @@ impl Game {
         let mut game = Game {
             info: GameMetaInfo {
                 name,
-                player_names: player_names,
+                player_names,
                 create_time: current_time_string(),
                 start_time: None,
                 player_start_cards: [
@@ -49,6 +50,7 @@ impl Game {
                     players[2].cards.clone(),
                     players[3].cards.clone(),
                 ],
+                end_time: None,
             },
             state: GameState {
                 started: false,
@@ -288,6 +290,7 @@ impl Game {
                     .play_card(card);
                 if next_game_state.player_at_turn().cards.is_empty() {
                     next_game_state.phase = GamePhase::Ended;
+                    next_game_meta.end_time = Some(current_time_string());
                 }
             }
             ActionType::AnnounceTrump(suit) => {
