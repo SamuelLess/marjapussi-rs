@@ -1,14 +1,14 @@
 #![feature(test)]
 #![allow(dead_code)]
 
-mod game;
-mod tests;
+use std::io;
 
 use crate::game::gameinfo::GameInfoDatabase;
 use crate::game::gamestate::GamePhase;
 use crate::game::Game;
-// use crate::tests::game::test_random_game_random;
-use std::io;
+
+mod game;
+mod tests;
 
 fn main() {
     test_play();

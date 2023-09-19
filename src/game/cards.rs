@@ -4,26 +4,21 @@ extern crate test;
 use std::cmp::max;
 use std::fmt;
 
+use itertools::concat;
+use serde::{Deserialize, Serialize};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-use itertools::concat;
+use crate::game::parse::parse_card;
 
-use serde::Serialize;
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, DeserializeFromStr, SerializeDisplay)]
 pub struct Card {
     /**
      * Only compare cards with same color.
      */
     pub suit: Suit,
     pub value: Value,
-}
-
-impl fmt::Display for Card {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}-{}", self.suit, self.value)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, EnumIter, Serialize)]
@@ -84,8 +79,8 @@ pub fn higher_cards(card: &Card, trump: Option<Suit>, pool: Option<Vec<Card>>) -
 }
 
 /**
-* Returns highest card if exists.
-*/
+ * Returns highest card if exists.
+ */
 pub fn high_card(trick: Vec<&Card>, trump: Option<Suit>) -> Option<&Card> {
     if trick.is_empty() {
         return None;
@@ -114,8 +109,8 @@ pub fn high_card(trick: Vec<&Card>, trump: Option<Suit>) -> Option<&Card> {
 }
 
 /**
-* Only for the first played card in the game. Proper play in rest of first trick handled elsewhere.
-*/
+ * Only for the first played card in the game. Proper play in rest of first trick handled elsewhere.
+ */
 pub fn allowed_first(cards: Vec<&Card>) -> Vec<&Card> {
     let mut allowed = cards
         .clone()
@@ -137,8 +132,8 @@ pub fn allowed_first(cards: Vec<&Card>) -> Vec<&Card> {
 }
 
 /**
-* Returns general high card.
-*/
+ * Returns general high card.
+ */
 pub fn allowed_cards<'a>(
     trick: Vec<&'a Card>,
     cards: Vec<&'a Card>,
@@ -240,4 +235,41 @@ pub fn print_cards(cards: &[Card]) {
     let card_strs: Vec<String> = cards.iter().map(|c| format!("{}", c)).collect();
     let s = card_strs.join(", ");
     println!("{}", s)
+}
+
+impl fmt::Display for Card {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let suit = match self.suit {
+            Suit::Red => "r",
+            Suit::Bells => "s",
+            Suit::Acorns => "e",
+            Suit::Green => "g",
+        };
+        let value = match self.value {
+            Value::Ace => "A",
+            Value::Ten => "Z",
+            Value::King => "K",
+            Value::Ober => "O",
+            Value::Unter => "U",
+            Value::Nine => "9",
+            Value::Eight => "8",
+            Value::Seven => "7",
+            Value::Six => "6",
+        };
+        write!(f, "{}-{}", suit, value)
+    }
+}
+
+impl fmt::Debug for Card {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self) // call method from Display
+    }
+}
+
+impl std::str::FromStr for Card {
+    type Err = std::io::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_card(String::from(s))
+    }
 }

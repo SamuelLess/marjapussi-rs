@@ -1,5 +1,8 @@
 #![allow(unused_imports)]
 extern crate test;
+
+use test::Bencher;
+
 use rand::seq::SliceRandom;
 
 use crate::game::gameevent::{ActionType, GameAction};
@@ -8,7 +11,6 @@ use crate::game::gamestate::GamePhase;
 use crate::game::player::PlaceAtTable;
 use crate::game::points::Points;
 use crate::game::{current_time_string, Game};
-use test::Bencher;
 
 #[test]
 fn test_time_creation() {
@@ -160,8 +162,8 @@ pub fn test_random_game_random() {
         }
         let select = opt_select.unwrap().clone();
         let res = game.apply_action(select.clone()).ok();
-        if res.is_some() {
-            game = res.unwrap();
+        if let Some(successful) = res {
+            game = successful;
         } else {
             panic!("Game: {:?}\n Action: {:?}", game, select);
         }
