@@ -1,5 +1,5 @@
 [package]
-name = "marjapussi-rs"
+name = "marjapussi"
 version = "0.1.0"
 edition = "2021"
 

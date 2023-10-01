@@ -1,17 +1,19 @@
-use self::{cards::Card, gameinfo::GameMetaInfo, gamestate::GameState};
+use std::time::SystemTime;
+
+use chrono::offset::Local;
+use chrono::DateTime;
+use itertools::Itertools;
+
+use crate::game::cards::{allowed_cards, high_card, Suit};
 use crate::game::errors::GameError;
 use crate::game::gameevent::{
     ActionType, AnswerType, GameAction, GameCallback, GameEvent, QuestionType,
 };
 use crate::game::gamestate::{FinishedTrick, GamePhase};
-
-use crate::game::cards::{allowed_cards, high_card, Suit};
 use crate::game::player::{create_players, PlaceAtTable, Player, PlayerTrumpPossibilities};
 use crate::game::points::{points_trick, Points};
-use chrono::offset::Local;
-use chrono::DateTime;
-use itertools::Itertools;
-use std::time::SystemTime;
+
+use self::{cards::Card, gameinfo::GameMetaInfo, gamestate::GameState};
 
 pub mod cards;
 pub mod errors;
@@ -21,6 +23,7 @@ pub mod gamestate;
 pub mod parse;
 pub mod player;
 pub mod points;
+pub mod series;
 
 /**
  * Wrapper for Game and all of its details.
@@ -41,6 +44,7 @@ impl Game {
         let mut game = Game {
             info: GameMetaInfo {
                 name,
+                series_id: None,
                 player_names,
                 create_time: current_time_string(),
                 start_time: None,
@@ -405,6 +409,16 @@ impl Game {
         };
         next_game.legal_actions = next_game.legal_actions();
         Ok(next_game)
+    }
+
+    pub fn ended(self) -> bool {
+        self.state.phase == GamePhase::Ended
+    }
+
+    pub fn apply_action_mutate_or_discard(&mut self, action: GameAction) {
+        if let Ok(next) = self.apply_action(action) {
+            *self = next;
+        }
     }
 }
 

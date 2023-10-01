@@ -1,14 +1,16 @@
+use serde::Serialize;
+
 use crate::game::cards::Card;
-use crate::game::gameevent::{ActionType, GameCallback, GameEvent, GameEventPlayer};
+use crate::game::gameevent::{ActionType, GameAction, GameCallback, GameEvent, GameEventPlayer};
 use crate::game::gamestate::{FinishedTrick, GamePhase};
 use crate::game::player::PlaceAtTable;
 use crate::game::points::{points_pair, Points};
 use crate::game::Game;
-use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GameMetaInfo {
     pub name: String,
+    pub series_id: Option<String>,
     pub create_time: String,
     pub start_time: Option<String>,
     pub end_time: Option<String>,
@@ -30,6 +32,7 @@ pub struct GameInfoPlayer {
     pub current_trick: Vec<Card>,
     pub last_trick: Option<FinishedTrick>,
     pub last_event: Option<GameEventPlayer>,
+    pub legal_actions: Vec<GameAction>,
 }
 
 impl GameInfoPlayer {
@@ -63,6 +66,7 @@ impl GameInfoPlayer {
                     }
                 }
             },
+            legal_actions: game.legal_actions.clone(),
         }
     }
 }
@@ -72,14 +76,16 @@ impl GameInfoPlayer {
 pub struct GameInfoDatabase {
     info: GameMetaInfo,
     game_value: Points,
-    won: Option<bool>, //None if no_one_played
+    won: Option<bool>,
+    //None if no_one_played
     no_one_played: bool,
     schwarz_game: bool,
     playing_party: Option<PlaceAtTable>,
     after_passing: Option<[Vec<Card>; 4]>,
     passed_cards: Option<(Vec<Card>, Vec<Card>)>,
     bidding_history: Vec<(ActionType, PlaceAtTable)>,
-    tricks: Vec<FinishedTrick>, //PlaceAtTable for who got the trick
+    tricks: Vec<FinishedTrick>,
+    //PlaceAtTable for who got the trick
     all_events: Vec<GameEvent>,
 }
 
