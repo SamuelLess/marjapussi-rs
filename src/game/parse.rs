@@ -46,6 +46,14 @@ pub fn parse_card(card: String) -> Result<Card, Error> {
     })
 }
 
+pub fn parse_cards(cards: Vec<&str>) -> Result<Vec<Card>, Error> {
+    let mut result = Vec::new();
+    for card in cards {
+        result.push(parse_card(card.to_string())?);
+    }
+    Ok(result)
+}
+
 #[derive(Debug, Deserialize)]
 struct LegacyGameFormat {
     name: String,
