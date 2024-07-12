@@ -5,12 +5,11 @@ use crate::game::gameevent::{ActionType, GameAction, GameCallback, GameEvent, Ga
 use crate::game::gamestate::{FinishedTrick, GamePhase};
 use crate::game::player::{PlaceAtTable, Player};
 use crate::game::points::{points_pair, Points};
-use crate::game::Game;
+use crate::game::{current_time_string, Game};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GameMetaInfo {
     pub name: String,
-    pub series_id: Option<String>,
     pub create_time: String,
     pub start_time: Option<String>,
     pub end_time: Option<String>,
@@ -22,8 +21,7 @@ impl GameMetaInfo {
     pub fn create(name: String, player_names: [String; 4], players: [Player; 4]) -> Self {
         GameMetaInfo {
             name,
-            series_id: None,
-            create_time: chrono::Utc::now().to_rfc3339(),
+            create_time: current_time_string(),
             start_time: None,
             end_time: None,
             player_names,
@@ -193,4 +191,10 @@ impl From<Game> for GameInfoDatabase {
     }
 }
 
-pub struct GameInfoSpectator {}
+impl GameInfoDatabase {
+    pub fn set_times(&mut self, created: String, started: String, ended: String) {
+        self.info.create_time = created;
+        self.info.start_time = Some(started);
+        self.info.end_time = Some(ended);
+    }
+}

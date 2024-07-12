@@ -49,7 +49,7 @@ impl Series {
     }
     pub fn active_game_apply(&mut self, action: GameAction) {
         if let Some(game) = self.games.last_mut() {
-            game.apply_action_mutate_or_discard(action);
+            game.apply_action_mut(action);
         }
     }
 }

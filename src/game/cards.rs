@@ -154,6 +154,11 @@ pub fn allowed_cards<'a>(
                     return first_trick_ace;
                 }
             }
+            let same_color_cards: Vec<&Card> = cards
+                .clone()
+                .into_iter()
+                .filter(|c: &&Card| c.suit == trick_suit)
+                .collect();
             let higher_cards: Vec<&Card> = cards
                 .clone()
                 .into_iter()
@@ -161,25 +166,28 @@ pub fn allowed_cards<'a>(
                     high_card(concat([trick.clone(), vec![c]]), trump) > Some(current_high_card)
                 })
                 .collect();
-            if !higher_cards.is_empty() {
-                return higher_cards;
-            }
-            let same_color_cards: Vec<&Card> = cards
+            let higher_same_color = higher_cards
                 .clone()
                 .into_iter()
-                .filter(|c: &&Card| c.suit == trick_suit)
-                .collect();
+                .filter(|c| c.suit == trick_suit)
+                .collect::<Vec<_>>();
+            if !higher_same_color.is_empty() {
+                return higher_same_color;
+            }
             if !same_color_cards.is_empty() {
                 return same_color_cards;
+            }
+            if !higher_cards.is_empty() {
+                return higher_cards;
             }
             cards
         }
         None => {
             //the trick has to be empty
-            if !first_trick {
-                cards
+            if first_trick {
+                allowed_first(cards)
             } else {
-                allowed_first(cards.clone())
+                cards
             }
         }
     }
@@ -301,10 +309,14 @@ mod tests {
             value: Value::Ten,
         };
 
-        let higher: Vec<Card> = parse_cards(vec![
-            "s-A", "r-6", "r-7", "r-8", "r-9", "r-U", "r-O", "r-K", "r-Z", "r-A",
-        ])
-        .unwrap();
+        let higher: Vec<Card> = parse_cards(
+            vec![
+                "s-A", "r-6", "r-7", "r-8", "r-9", "r-U", "r-O", "r-K", "r-Z", "r-A",
+            ]
+            .into_iter()
+            .map(|c| c.to_string())
+            .collect(),
+        );
         assert_eq!(higher_cards(&ra, None, None), vec![]);
         assert_eq!(higher_cards(&sz, None, None), vec!["s-A".parse().unwrap()]);
         assert_eq!(higher_cards(&sz, Some(Suit::Red), None), higher)

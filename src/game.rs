@@ -95,7 +95,7 @@ impl Game {
         let this_event = GameEvent {
             last_action: action,
             callback: this_callback,
-            next_player_at_turn: next_game_state.player_at_turn.clone(),
+            player_at_turn: next_game_state.player_at_turn.clone(),
             time: current_time_string(),
         };
         let mut next_all_events: Vec<GameEvent> = self.all_events.clone();
@@ -115,9 +115,13 @@ impl Game {
         self.state.phase == GamePhase::Ended
     }
 
-    pub fn apply_action_mutate_or_discard(&mut self, action: GameAction) {
-        if let Ok(next) = self.apply_action(action) {
+    pub fn apply_action_mut(&mut self, action: GameAction) {
+        if let Ok(next) = self.apply_action(action.clone()) {
             *self = next;
+        } else {
+            eprintln!("Discarded illegal action: {:?}", action);
+            eprintln!("Game state: {:#?}", self);
+            panic!();
         }
     }
 }

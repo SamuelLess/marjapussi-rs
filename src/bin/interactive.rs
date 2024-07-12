@@ -1,4 +1,3 @@
-//#![feature(test)]
 #![allow(dead_code)]
 
 use std::io;

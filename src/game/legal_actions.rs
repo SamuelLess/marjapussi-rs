@@ -104,8 +104,9 @@ pub fn legal_passing(game: &Game) -> Vec<GameAction> {
         .into_iter()
         .combinations(4)
     {
+        let sorted: Vec<Card> = comb.clone().into_iter().sorted().rev().collect();
         actions.push(GameAction {
-            action_type: ActionType::Pass(comb),
+            action_type: ActionType::Pass(sorted),
             player: game.state.player_at_turn.clone(),
         })
     }
@@ -124,14 +125,10 @@ pub fn legal_cards(game: &Game) -> Vec<GameAction> {
     if trick.len() == 4 {
         trick = vec![];
     }
-    let mut btrick: Vec<&Card> = vec![];
-    for c in &trick {
-        btrick.push(c);
-    }
     let trump = game.state.trump;
     let first_trick = players_cards.len() == 9;
 
-    for card in allowed_cards(btrick, players_cards, trump, first_trick) {
+    for card in allowed_cards(trick.iter().collect(), players_cards, trump, first_trick) {
         actions.push(GameAction {
             action_type: ActionType::CardPlayed(card.clone()),
             player: game.state.player_at_turn.clone(),

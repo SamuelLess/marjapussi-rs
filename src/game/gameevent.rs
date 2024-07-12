@@ -12,7 +12,7 @@ pub struct GameEvent {
     pub last_action: GameAction,
     /// Inner change that can not be known from single last action
     pub callback: Option<GameCallback>,
-    pub next_player_at_turn: PlaceAtTable,
+    pub player_at_turn: PlaceAtTable,
     pub time: String,
 }
 

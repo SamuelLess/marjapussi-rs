@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Pointer};
 
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::game::cards::{get_all_cards, Card};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct PlaceAtTable(pub u8);
 
 impl PlaceAtTable {
@@ -23,6 +23,12 @@ impl PlaceAtTable {
     }
     pub(crate) fn party(&self) -> Self {
         PlaceAtTable(self.0 % 2)
+    }
+}
+
+impl Debug for PlaceAtTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Seat({})", self.0)
     }
 }
 
