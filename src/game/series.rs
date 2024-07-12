@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use crate::game::gameevent::GameAction;
 use crate::game::gameinfo::GameInfoPlayer;
 use crate::game::player::PlaceAtTable;

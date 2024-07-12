@@ -1,8 +1,10 @@
-use crate::game::cards::{get_all_cards, Card};
+use std::fmt::Debug;
+
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::Serialize;
-use std::fmt::Debug;
+
+use crate::game::cards::{get_all_cards, Card};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PlaceAtTable(pub u8);
@@ -94,23 +96,20 @@ fn create_player(name: String, cards: Vec<Card>, place: u8) -> Player {
 }
 
 pub fn create_players(names: [String; 4], cards: Option<[Vec<Card>; 4]>) -> [Player; 4] {
-    let players_cards = match cards {
-        Some(players_cards) => players_cards,
-        None => {
-            //random shuffled cads
-            let mut deck = get_all_cards();
-            deck.shuffle(&mut thread_rng());
-            let mut cards: [Vec<Card>; 4] = [vec![], vec![], vec![], vec![]];
-            for i in 0..4 {
-                let mut one_players_cards = vec![];
-                for c in 0..9 {
-                    one_players_cards.push(deck.get(i * 9 + c).unwrap().clone());
-                }
-                cards[i] = one_players_cards;
+    let players_cards = cards.unwrap_or_else(|| {
+        //random shuffled cads
+        let mut deck = get_all_cards();
+        deck.shuffle(&mut thread_rng());
+        let mut cards: [Vec<Card>; 4] = [vec![], vec![], vec![], vec![]];
+        for i in 0..4 {
+            let mut one_players_cards = vec![];
+            for c in 0..9 {
+                one_players_cards.push(deck.get(i * 9 + c).unwrap().clone());
             }
-            cards
+            cards[i] = one_players_cards;
         }
-    };
+        cards
+    });
 
     let p0 = create_player(names[0].clone(), players_cards[0].clone(), 0);
     let p1 = create_player(names[1].clone(), players_cards[1].clone(), 1);

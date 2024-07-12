@@ -1,8 +1,9 @@
+use serde::Serialize;
+
 use crate::game::cards::{Card, Suit};
 use crate::game::gameevent::ActionType;
 use crate::game::player::{PlaceAtTable, Player};
 use crate::game::points::Points;
-use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GamePhase {

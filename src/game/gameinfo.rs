@@ -18,7 +18,7 @@ pub struct GameMetaInfo {
     pub player_start_cards: [Vec<Card>; 4],
 }
 
-//everything one player in the frontend wants to know
+/// Everything one player in the frontend wants to know
 #[derive(Debug, Clone)]
 pub struct GameInfoPlayer {
     pub meta_info: GameMetaInfo,
@@ -71,21 +71,21 @@ impl GameInfoPlayer {
     }
 }
 
-//everything the database needs to know
+/// Everything the database needs to know
 #[derive(Debug, Clone, Serialize)]
 pub struct GameInfoDatabase {
     info: GameMetaInfo,
     game_value: Points,
+    /// None if no_one_played
     won: Option<bool>,
-    //None if no_one_played
     no_one_played: bool,
     schwarz_game: bool,
     playing_party: Option<PlaceAtTable>,
     after_passing: Option<[Vec<Card>; 4]>,
     passed_cards: Option<(Vec<Card>, Vec<Card>)>,
     bidding_history: Vec<(ActionType, PlaceAtTable)>,
+    /// PlaceAtTable for who got the trick
     tricks: Vec<FinishedTrick>,
-    //PlaceAtTable for who got the trick
     all_events: Vec<GameEvent>,
 }
 
