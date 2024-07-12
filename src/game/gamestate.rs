@@ -45,21 +45,43 @@ pub struct GameState {
 }
 
 impl GameState {
+    pub fn create(players: [Player; 4]) -> Self {
+        GameState {
+            started: false,
+            players_started: vec![],
+            players_accept_undo: vec![],
+            phase: GamePhase::WaitingForStart,
+            trump: None,
+            trump_called: vec![],
+            player_at_turn: PlaceAtTable(0),
+            value: Points(115),
+            bidding_players: 4,
+            bidding_history: vec![],
+            players,
+            all_tricks: vec![],
+            current_trick: vec![],
+        }
+    }
     pub fn player_at_turn(&self) -> &Player {
         &self.players[self.player_at_turn.0 as usize]
     }
+
     pub fn player_at_turn_mut(&mut self) -> &mut Player {
         &mut self.players[self.player_at_turn.0 as usize]
     }
+
     pub fn partner(&self) -> &Player {
         &self.players[self.player_at_turn.partner().0 as usize]
     }
+
     pub fn prev_player(&self) -> &Player {
         &self.players[self.player_at_turn.prev().0 as usize]
     }
+
     pub fn player_at_place(&self, place: PlaceAtTable) -> &Player {
         &self.players[place.0 as usize]
     }
+
     pub fn player_at_place_mut(&mut self, place: PlaceAtTable) -> &mut Player {
         &mut self.players[place.0 as usize]
     }

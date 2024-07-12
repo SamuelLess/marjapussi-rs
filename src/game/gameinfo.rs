@@ -3,7 +3,7 @@ use serde::Serialize;
 use crate::game::cards::Card;
 use crate::game::gameevent::{ActionType, GameAction, GameCallback, GameEvent, GameEventPlayer};
 use crate::game::gamestate::{FinishedTrick, GamePhase};
-use crate::game::player::PlaceAtTable;
+use crate::game::player::{PlaceAtTable, Player};
 use crate::game::points::{points_pair, Points};
 use crate::game::Game;
 
@@ -16,6 +16,25 @@ pub struct GameMetaInfo {
     pub end_time: Option<String>,
     pub player_names: [String; 4],
     pub player_start_cards: [Vec<Card>; 4],
+}
+
+impl GameMetaInfo {
+    pub fn create(name: String, player_names: [String; 4], players: [Player; 4]) -> Self {
+        GameMetaInfo {
+            name,
+            series_id: None,
+            create_time: chrono::Utc::now().to_rfc3339(),
+            start_time: None,
+            end_time: None,
+            player_names,
+            player_start_cards: [
+                players[0].cards.clone(),
+                players[1].cards.clone(),
+                players[2].cards.clone(),
+                players[3].cards.clone(),
+            ],
+        }
+    }
 }
 
 /// Everything one player in the frontend wants to know
