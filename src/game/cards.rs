@@ -1,5 +1,4 @@
 #![allow(unused)]
-extern crate test;
 
 use std::cmp::max;
 use std::fmt;
@@ -69,13 +68,10 @@ pub fn is_higher_card(higher: &Card, lower: &Card, trump: Option<Suit>) -> bool 
 }
 
 pub fn higher_cards(card: &Card, trump: Option<Suit>, pool: Option<Vec<Card>>) -> Vec<Card> {
-    match pool {
-        Some(cards) => cards,
-        None => get_all_cards(),
-    }
-    .into_iter()
-    .filter(|maybe| is_higher_card(maybe, card, trump))
-    .collect()
+    pool.unwrap_or_else(|| get_all_cards())
+        .into_iter()
+        .filter(|maybe| is_higher_card(maybe, card, trump))
+        .collect()
 }
 
 /**
@@ -271,5 +267,247 @@ impl std::str::FromStr for Card {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         parse_card(String::from(s))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_higher_card() {
+        let ra = Card {
+            suit: Suit::Red,
+            value: Value::Ace,
+        };
+        let sz = Card {
+            suit: Suit::Bells,
+            value: Value::Ten,
+        };
+        let su = Card {
+            suit: Suit::Bells,
+            value: Value::Ten,
+        };
+        assert!(!is_higher_card(&su, &sz, None));
+        assert!(!is_higher_card(&ra, &sz, Some(Suit::Bells)));
+        assert!(is_higher_card(&ra, &sz, Some(Suit::Red)))
+    }
+
+    #[test]
+    fn test_higher_cards() {
+        let ra = Card {
+            suit: Suit::Red,
+            value: Value::Ace,
+        };
+        let sz = Card {
+            suit: Suit::Bells,
+            value: Value::Ten,
+        };
+        let higher = vec![
+            Card {
+                suit: Suit::Bells,
+                value: Value::Ace,
+            },
+            Card {
+                suit: Suit::Red,
+                value: Value::Six,
+            },
+            Card {
+                suit: Suit::Red,
+                value: Value::Seven,
+            },
+            Card {
+                suit: Suit::Red,
+                value: Value::Eight,
+            },
+            Card {
+                suit: Suit::Red,
+                value: Value::Nine,
+            },
+            Card {
+                suit: Suit::Red,
+                value: Value::Unter,
+            },
+            Card {
+                suit: Suit::Red,
+                value: Value::Ober,
+            },
+            Card {
+                suit: Suit::Red,
+                value: Value::King,
+            },
+            Card {
+                suit: Suit::Red,
+                value: Value::Ten,
+            },
+            Card {
+                suit: Suit::Red,
+                value: Value::Ace,
+            },
+        ];
+        assert_eq!(higher_cards(&ra, None, None), vec![]);
+        assert_eq!(
+            higher_cards(&sz, None, None),
+            vec![Card {
+                suit: Suit::Bells,
+                value: Value::Ace,
+            }]
+        );
+        assert_eq!(higher_cards(&sz, Some(Suit::Red), None), higher)
+    }
+
+    #[test]
+    fn test_high_card() {
+        let ra = Card {
+            suit: Suit::Red,
+            value: Value::Ace,
+        };
+        let sz = Card {
+            suit: Suit::Bells,
+            value: Value::Ten,
+        };
+        assert_eq!(high_card(vec![], None), None);
+        assert_eq!(high_card(vec![&ra, &sz], None), Some(&ra));
+        assert_eq!(high_card(vec![&ra, &sz], Some(Suit::Bells)), Some(&sz));
+    }
+
+    #[test]
+    fn test_allowed_first() {
+        let mut cards: Vec<&Card> = vec![
+            &Card {
+                suit: Suit::Red,
+                value: Value::Seven,
+            },
+            &Card {
+                suit: Suit::Bells,
+                value: Value::Seven,
+            },
+        ];
+        assert_eq!(allowed_first(cards.clone()), cards);
+        cards.push(&Card {
+            suit: Suit::Green,
+            value: Value::Unter,
+        });
+        assert_eq!(
+            allowed_first(cards.clone()),
+            vec![&Card {
+                suit: Suit::Green,
+                value: Value::Unter,
+            }]
+        );
+        cards.push(&Card {
+            suit: Suit::Red,
+            value: Value::Ace,
+        });
+        cards.push(&Card {
+            suit: Suit::Bells,
+            value: Value::Ace,
+        });
+        assert_eq!(
+            allowed_first(cards.clone()),
+            vec![
+                &Card {
+                    suit: Suit::Red,
+                    value: Value::Ace,
+                },
+                &Card {
+                    suit: Suit::Bells,
+                    value: Value::Ace,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_allowed_cards() {
+        let mut cards: Vec<&Card> = vec![];
+        let trick: Vec<&Card> = vec![];
+        //everything empty
+        assert_eq!(
+            allowed_cards(trick, cards.clone(), None, false),
+            vec![] as Vec<&Card>
+        );
+        //first trick, ace wasn't played
+        let trick = vec![&Card {
+            suit: Suit::Green,
+            value: Value::Unter,
+        }];
+        cards.push(&Card {
+            suit: Suit::Red,
+            value: Value::Unter,
+        });
+        cards.push(&Card {
+            suit: Suit::Green,
+            value: Value::Nine,
+        });
+        cards.push(&Card {
+            suit: Suit::Green,
+            value: Value::Ten,
+        });
+        cards.push(&Card {
+            suit: Suit::Green,
+            value: Value::Ace,
+        });
+        assert_eq!(
+            allowed_cards(trick.clone(), cards.clone(), None, true),
+            vec![&Card {
+                suit: Suit::Green,
+                value: Value::Ace,
+            },]
+        );
+        //same color and higher
+        assert_eq!(
+            allowed_cards(trick, cards.clone(), None, false),
+            vec![
+                &Card {
+                    suit: Suit::Green,
+                    value: Value::Ten,
+                },
+                &Card {
+                    suit: Suit::Green,
+                    value: Value::Ace,
+                },
+            ]
+        );
+        //trump
+        let trick = vec![&Card {
+            suit: Suit::Bells,
+            value: Value::Ober,
+        }];
+        assert_eq!(
+            allowed_cards(trick, cards.clone(), Some(Suit::Red), false),
+            vec![&Card {
+                suit: Suit::Red,
+                value: Value::Unter,
+            },]
+        );
+        //same color but no higher if already trump
+        let trick = vec![
+            &Card {
+                suit: Suit::Green,
+                value: Value::Ober,
+            },
+            &Card {
+                suit: Suit::Red,
+                value: Value::Ober,
+            },
+        ];
+        assert_eq!(
+            allowed_cards(trick, cards.clone(), Some(Suit::Red), false),
+            vec![
+                &Card {
+                    suit: Suit::Green,
+                    value: Value::Nine,
+                },
+                &Card {
+                    suit: Suit::Green,
+                    value: Value::Ten,
+                },
+                &Card {
+                    suit: Suit::Green,
+                    value: Value::Ace,
+                },
+            ]
+        );
     }
 }

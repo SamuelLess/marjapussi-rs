@@ -3,6 +3,11 @@ name = "marjapussi"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "utopia"
+path = "src/bin/interactive.rs"
+bench = false
+
 [dependencies]
 itertools = "0.13.0"
 strum = "0.26.3"
