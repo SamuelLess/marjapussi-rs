@@ -2,7 +2,7 @@
 
 use std::io;
 
-use marjapussi::game::gameinfo::GameInfoDatabase;
+use marjapussi::game::gameinfo::GameFinishedInfo;
 use marjapussi::game::gamestate::GamePhase;
 use marjapussi::game::Game;
 
@@ -65,7 +65,7 @@ fn test_play() {
     //println!("{:#?}", GameInfoDatabase::from(game));
     println!(
         "{}",
-        serde_json::to_string(&GameInfoDatabase::from(game))
+        serde_json::to_string(&GameFinishedInfo::from(game))
             .ok()
             .unwrap()
     );

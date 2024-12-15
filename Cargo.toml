@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "utopia"
+name = "interactive"
 path = "src/bin/interactive.rs"
 bench = false
 

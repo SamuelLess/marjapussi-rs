@@ -7,7 +7,7 @@ use strum::IntoEnumIterator;
 
 use crate::game::cards::{Card, Suit, Value};
 use crate::game::gameevent::{ActionType, AnswerType, GameAction, QuestionType};
-use crate::game::gameinfo::GameInfoDatabase;
+use crate::game::gameinfo::GameFinishedInfo;
 use crate::game::player::PlaceAtTable;
 use crate::game::Game;
 
@@ -52,8 +52,11 @@ pub fn parse_cards(cards: Vec<String>) -> Vec<Card> {
     cards.into_iter().map(|c| parse_card(c).unwrap()).collect()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct LegacyGameFormat {
+    /// The id of the game found in '_id.$oid'
+    #[serde(rename = "_id")]
+    id: String,
     name: String,
     created: String,
     started: String,
@@ -94,7 +97,7 @@ fn parse_action(action: String) -> Result<GameAction, Error> {
         }
         "PRMO" => ActionType::NewBid(action_value.parse::<i32>().unwrap()),
         "TRCK" => {
-            let card = parse_card(action_value.to_string()).unwrap();
+            let card = parse_card(action_value.to_string())?;
             ActionType::CardPlayed(card)
         }
         "QUES" => parse_ques(action.clone()),
@@ -164,8 +167,7 @@ fn parse_answ(action: String) -> ActionType {
     action_type
 }
 
-pub fn parse_legacy_format(game_data: LegacyGameFormat) -> Result<GameInfoDatabase, Error> {
-    //println!("{:#?}", game_data);
+pub fn parse_legacy_format(game_data: LegacyGameFormat) -> Result<GameFinishedInfo, Error> {
     let names: [String; 4] = game_data.players.clone().try_into().unwrap();
 
     let cards = [
@@ -177,8 +179,7 @@ pub fn parse_legacy_format(game_data: LegacyGameFormat) -> Result<GameInfoDataba
 
     let mut game_replay = Game::new(game_data.name, names, Some(cards));
 
-    //println!("{:#?}", game_replay);
-    for i in 0..4 {
+    for _ in 0..4 {
         game_replay.apply_action_mut(game_replay.legal_actions[0].clone());
     }
 
@@ -204,13 +205,14 @@ pub fn parse_legacy_format(game_data: LegacyGameFormat) -> Result<GameInfoDataba
         game_replay.apply_action_mut(new_action);
     }
     //print!("{:#?}", game_replay.state.phase);
-    let mut game_db = GameInfoDatabase::from(game_replay);
+    let mut game_db = GameFinishedInfo::from(game_replay);
     game_db.set_times(game_data.created, game_data.started, game_data.finished);
     Ok(game_db)
 }
 
 mod tests {
     use super::*;
+    use crate::game::points::Points;
 
     #[test]
     pub fn test_parse_card() {
@@ -239,25 +241,23 @@ mod tests {
 
     #[test]
     pub fn test_parse_python_game() {
-        let input: String = String::from(
+        let input: LegacyGameFormat = serde_json::from_str(
             r#"
         {
-           "_id":{
-              "$oid":"643b0e6be1f3816d1dad798f"
-           },
-           "name":"thüringen",
+           "_id": "ffffffffe1f3816d1dad798f",
+           "name":"NameOfGame",
            "created":"2023-04-15 22:45:13",
            "started":"2023-04-15 22:45:34",
            "series_id":"",
            "finished":"2023-04-15 22:51:55",
            "players":[
-              "marjastephen",
-              "Elinka",
-              "Jonas",
-              "Gast1"
+              "Player A",
+              "Player B",
+              "Player C",
+              "Player D"
            ],
            "cards":{
-              "marjastephen":[
+              "Player A":[
                  "r-6",
                  "e-Z",
                  "e-K",
@@ -268,7 +268,7 @@ mod tests {
                  "g-7",
                  "g-6"
               ],
-              "Elinka":[
+              "Player B":[
                  "r-A",
                  "r-O",
                  "r-U",
@@ -279,7 +279,7 @@ mod tests {
                  "g-A",
                  "g-9"
               ],
-              "Jonas":[
+              "Player C":[
                  "r-7",
                  "s-A",
                  "s-9",
@@ -290,7 +290,7 @@ mod tests {
                  "g-Z",
                  "g-U"
               ],
-              "Gast1":[
+              "Player D":[
                  "r-Z",
                  "r-K",
                  "r-8",
@@ -430,33 +430,34 @@ mod tests {
               "3,TRCK,s-Z",
               "0,TRCK,e-Z"
            ],
-           "playing_player":"Gast1",
+           "playing_player":"Player D",
            "game_value":155,
            "players_points":{
-              "marjastephen":0,
-              "Elinka":199,
-              "Jonas":0,
-              "Gast1":121
+              "Player A":0,
+              "Player B":199,
+              "Player C":0,
+              "Player D":121
            },
            "players_sup":{
-              "marjastephen":[
+              "Player A":[
 
               ],
-              "Elinka":[
+              "Player B":[
                  "r"
               ],
-              "Jonas":[
+              "Player C":[
 
               ],
-              "Gast1":[
+              "Player D":[
                  "s"
               ]
            },
            "schwarz_game":true
         }
       "#,
-        );
-        let _result = parse_legacy_format(input);
-        println!("{:#?}", _result);
+        )
+        .unwrap();
+        let result = parse_legacy_format(input.clone()).unwrap();
+        assert_eq!(result.game_value, Points(input.game_value));
     }
 }

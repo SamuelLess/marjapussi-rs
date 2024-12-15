@@ -13,9 +13,7 @@ use crate::game::parse::parse_card;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, DeserializeFromStr, SerializeDisplay)]
 pub struct Card {
-    /**
-     * Only compare cards with same color.
-     */
+    /// Only compare cards with same color
     pub suit: Suit,
     pub value: Value,
 }

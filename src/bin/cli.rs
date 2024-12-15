@@ -10,7 +10,7 @@ use marjapussi::game::parse::LegacyGameFormat;
 
 fn main() {
     let matches = Command::new("Game Parser")
-        .version("1.0")
+        .version("0.1")
         .author("Your Name")
         .about("Parses a file in legacy JSON format with top level list")
         .arg(
@@ -45,7 +45,4 @@ fn to_new_format(contents: String) -> String {
         converted.push(parse_legacy_format(game).unwrap());
     }
     serde_json::to_string_pretty(&converted).expect("Error serializing the new format")
-
-    //let new_format = parse_legacy_format(contents).expect("Error parsing the file"); // save the new format to a file
-    //serde_json::to_string_pretty(&new_format).expect("Error serializing the new format")
 }

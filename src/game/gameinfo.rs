@@ -90,23 +90,23 @@ impl GameInfoPlayer {
 
 /// Everything the database needs to know
 #[derive(Debug, Clone, Serialize)]
-pub struct GameInfoDatabase {
-    info: GameMetaInfo,
-    game_value: Points,
+pub struct GameFinishedInfo {
+    pub info: GameMetaInfo,
+    pub game_value: Points,
     /// None if no_one_played
-    won: Option<bool>,
-    no_one_played: bool,
-    schwarz_game: bool,
-    playing_party: Option<PlaceAtTable>,
-    after_passing: Option<[Vec<Card>; 4]>,
-    passed_cards: Option<(Vec<Card>, Vec<Card>)>,
-    bidding_history: Vec<(ActionType, PlaceAtTable)>,
+    pub won: Option<bool>,
+    pub no_one_played: bool,
+    pub schwarz_game: bool,
+    pub playing_party: Option<PlaceAtTable>,
+    pub after_passing: Option<[Vec<Card>; 4]>,
+    pub passed_cards: Option<(Vec<Card>, Vec<Card>)>,
+    pub bidding_history: Vec<(ActionType, PlaceAtTable)>,
     /// PlaceAtTable for who got the trick
-    tricks: Vec<FinishedTrick>,
-    all_events: Vec<GameEvent>,
+    pub tricks: Vec<FinishedTrick>,
+    pub all_events: Vec<GameEvent>,
 }
 
-impl From<Game> for GameInfoDatabase {
+impl From<Game> for GameFinishedInfo {
     fn from(game: Game) -> Self {
         if game.state.phase != GamePhase::Ended {
             panic!("Cannot convert unfinished game!");
@@ -175,7 +175,7 @@ impl From<Game> for GameInfoDatabase {
             won = Some(points_party >= game.state.value);
         }
 
-        GameInfoDatabase {
+        GameFinishedInfo {
             info: game.info.clone(),
             game_value: game.state.value,
             won,
@@ -191,7 +191,7 @@ impl From<Game> for GameInfoDatabase {
     }
 }
 
-impl GameInfoDatabase {
+impl GameFinishedInfo {
     pub fn set_times(&mut self, created: String, started: String, ended: String) {
         self.info.create_time = created;
         self.info.start_time = Some(started);
