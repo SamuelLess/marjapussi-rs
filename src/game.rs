@@ -2,7 +2,6 @@ use std::time::SystemTime;
 
 use chrono::offset::Local;
 use chrono::DateTime;
-use itertools::Itertools;
 
 use crate::game::errors::GameError;
 use crate::game::gameevent::{ActionType, GameAction, GameEvent};

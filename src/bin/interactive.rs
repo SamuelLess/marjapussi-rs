@@ -12,9 +12,8 @@ fn main() {
 
 fn test_play() {
     println!("starting");
-    //tokio::try_join!(run_warp(&http_addr), run_socket(&socket_addr)).unwrap();
     let mut game = Game::new(
-        String::from("Eine Runde"),
+        String::from("Test Game"),
         [
             String::from("S 1"),
             String::from("S 2"),

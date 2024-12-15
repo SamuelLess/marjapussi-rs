@@ -159,7 +159,7 @@ impl From<Game> for GameFinishedInfo {
                 .collect();
             cards_after_passing[playing_player.partner().0 as usize]
                 .append(&mut passed_back.clone().unwrap());
-            //cards of playing player
+            // cards of playing player
             cards_after_passing[playing_player.0 as usize].append(&mut passed_forth.unwrap());
             cards_after_passing[playing_player.0 as usize] = cards_after_passing
                 [playing_player.0 as usize]
