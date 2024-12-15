@@ -9,10 +9,10 @@ use marjapussi::game::parse::parse_legacy_format;
 use marjapussi::game::parse::LegacyGameFormat;
 
 fn main() {
-    let matches = Command::new("Game Parser")
+    let matches = Command::new("Legacy Game Format JSON Parser")
         .version("0.1")
-        .author("Your Name")
-        .about("Parses a file in legacy JSON format with top level list")
+        .author("Samuel Leßmann")
+        .about("Parses a file in legacy JSON format with top level list.")
         .arg(
             Arg::new("filename")
                 .help("The JSON file to parse")

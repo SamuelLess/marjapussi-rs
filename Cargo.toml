@@ -1,11 +1,19 @@
 [package]
 name = "marjapussi"
 version = "0.1.0"
+license = "GPL-3"
+authors = ["Samuel Leßmann <samuel@lessmann.dev>"]
+repository = "https://github.com/SamuelLess/marjapussi-rs"
 edition = "2021"
 
 [[bin]]
 name = "interactive"
 path = "src/bin/interactive.rs"
+bench = false
+
+[[bin]]
+name = "parse"
+path = "src/bin/parse_legacy.rs"
 bench = false
 
 [dependencies]
