@@ -210,6 +210,7 @@ pub fn parse_legacy_format(game_data: LegacyGameFormat) -> Result<GameFinishedIn
     Ok(game_db)
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::game::points::Points;

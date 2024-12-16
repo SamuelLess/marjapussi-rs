@@ -1,4 +1,4 @@
-use std::fmt::{Debug, Pointer};
+use std::fmt::Debug;
 
 use rand::seq::SliceRandom;
 use rand::thread_rng;
