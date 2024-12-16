@@ -2,6 +2,8 @@
 name = "marjapussi"
 version = "0.1.0"
 license = "GPL-3"
+readme = "README.md"
+description = "Implements the Finnish card game Marapussi."
 authors = ["Samuel Leßmann <samuel@lessmann.dev>"]
 repository = "https://github.com/SamuelLess/marjapussi-rs"
 edition = "2021"
