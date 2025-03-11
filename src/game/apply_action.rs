@@ -51,16 +51,17 @@ impl ActionType {
 
                 let mut next_player = next_game_state.player_at_turn.next();
 
-                //TODO: redo this when you actually understand what you are doing
                 while !next_game_state.player_at_place(next_player.clone()).bidding {
                     next_player = next_player.next();
                 }
-                if !(next_game_state.phase == GamePhase::Raising) {
-                    //still bidding
-                    next_game_state.player_at_turn = next_player.clone();
+                if next_player == next_game_state.player_at_turn {
+                    //same player can't bid against himself
+                    next_game_state.phase = GamePhase::PassingForth;
+                    next_game_state.player_at_turn = next_game_state.player_at_turn.partner();
+                    break 'newbid;
                 } else {
-                    //game value was raised
-                    next_game_state.phase = GamePhase::Trick;
+                    // continue bidding
+                    next_game_state.player_at_turn = next_player.clone();
                 }
             }
             ActionType::StopBidding => {

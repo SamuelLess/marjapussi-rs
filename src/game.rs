@@ -110,7 +110,7 @@ impl Game {
         Ok(next_game)
     }
 
-    pub fn ended(self) -> bool {
+    pub fn ended(&self) -> bool {
         self.state.phase == GamePhase::Ended
     }
 

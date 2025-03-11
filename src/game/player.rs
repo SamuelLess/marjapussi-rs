@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
+use rand::rng;
 use rand::seq::SliceRandom;
-use rand::thread_rng;
 use serde::Serialize;
 
 use crate::game::cards::{get_all_cards, Card};
@@ -105,7 +105,7 @@ pub fn create_players(names: [String; 4], cards: Option<[Vec<Card>; 4]>) -> [Pla
     let players_cards = cards.unwrap_or_else(|| {
         //random shuffled cads
         let mut deck = get_all_cards();
-        deck.shuffle(&mut thread_rng());
+        deck.shuffle(&mut rng());
         let mut cards: [Vec<Card>; 4] = [vec![], vec![], vec![], vec![]];
         for i in 0..4 {
             let mut one_players_cards = vec![];
