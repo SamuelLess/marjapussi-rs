@@ -133,9 +133,8 @@ pub fn current_time_string() -> String {
 
 #[cfg(test)]
 mod tests {
-    use rand::prelude::SliceRandom;
-
     use super::*;
+    use rand::prelude::IndexedMutRandom;
 
     #[test]
     fn test_time_creation() {
@@ -273,7 +272,7 @@ mod tests {
                 panic!("Too many moves! Game: {:#?}\n ", game,);
             }
             actions.clone_from(&game.legal_actions);
-            let opt_select = actions.choose(&mut rand::thread_rng());
+            let opt_select = actions.choose_mut(&mut rand::rng());
             if opt_select.is_none() {
                 panic!("Game: {:#?}\n Action: {:?}", game, opt_select);
             }
