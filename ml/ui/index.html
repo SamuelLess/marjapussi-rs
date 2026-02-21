@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Marjapussi AI</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <!-- Header -->
+  <header id="header">
+    <div id="logo">🃏 Marjapussi AI</div>
+    <div id="header-controls">
+      <button id="btn-new-game" class="btn btn-primary">New Game</button>
+      <button id="btn-auto-play" class="btn btn-secondary">▶ Auto-play</button>
+      <button id="btn-proceed" class="btn btn-accent" title="Proceed one AI move">
+        Proceed ▶
+      </button>
+      <div id="phase-badge">Phase 1</div>
+      <div id="status-dot" class="dot dot-idle" title="Server status"></div>
+    </div>
+  </header>
+
+  <!-- Main layout -->
+  <main id="main">
+    <!-- Left: Game Board -->
+    <section id="board-panel">
+      <!-- Scores bar -->
+      <div id="score-bar">
+        <div class="score-team" id="team-s">
+          <span class="team-label">Playing Party</span>
+          <span class="score-val" id="score-s">0</span>
+        </div>
+        <div id="trump-display">
+          <div id="trump-suit" class="trump-suit"></div>
+          <div id="trump-label">No Trump</div>
+        </div>
+        <div class="score-team" id="team-n">
+          <span class="team-label">Defending Party</span>
+          <span class="score-val" id="score-n">0</span>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div id="table">
+        <!-- 4 player slots, positioned top/right/bottom/left of center -->
+        <div id="player-top" class="player-slot" data-seat="2">
+          <div class="seat-label"><span class="player-name">Partner</span>
+            <span class="seat-badge">P2</span></div>
+          <div class="hand" id="hand-2"></div>
+          <button class="btn-takeover" data-seat="2">Take over</button>
+        </div>
+        <div id="player-left" class="player-slot" data-seat="1">
+          <div class="seat-label"><span class="player-name">Left</span>
+            <span class="seat-badge">P1</span></div>
+          <div class="hand hand-vertical" id="hand-1"></div>
+          <button class="btn-takeover" data-seat="1">Take over</button>
+        </div>
+        <div id="player-right" class="player-slot" data-seat="3">
+          <div class="seat-label"><span class="player-name">Right</span>
+            <span class="seat-badge">P3</span></div>
+          <div class="hand hand-vertical" id="hand-3"></div>
+          <button class="btn-takeover" data-seat="3">Take over</button>
+        </div>
+        <div id="player-bottom" class="player-slot" data-seat="0">
+          <div class="seat-label"><span class="player-name">You</span>
+            <span class="seat-badge human">P0 ✦</span></div>
+          <div class="hand" id="hand-0"></div>
+        </div>
+
+        <!-- Trick area in center -->
+        <div id="trick-area">
+          <div id="trick-cards"></div>
+          <div id="trick-info"></div>
+        </div>
+      </div>
+
+      <!-- Game log -->
+      <div id="game-log">
+        <div id="log-title">Game Log</div>
+        <div id="log-entries"></div>
+      </div>
+    </section>
+
+    <!-- Middle: AI Info Panel -->
+    <section id="ai-panel">
+      <h2 class="panel-title">AI Info</h2>
+      <div id="ai-seats"></div>
+    </section>
+
+    <!-- Right: Training Monitor -->
+    <section id="training-panel">
+      <h2 class="panel-title">Training Monitor</h2>
+      <div id="training-status">
+        <div class="stat-row">
+          <span>Games played</span>
+          <span id="stat-games">—</span>
+        </div>
+        <div class="stat-row">
+          <span>Stage</span>
+          <span id="stat-stage">—</span>
+        </div>
+        <div class="stat-row">
+          <span>Win vs heuristic</span>
+          <span id="stat-winrate">—</span>
+        </div>
+        <div class="stat-row">
+          <span>Loss</span>
+          <span id="stat-loss">—</span>
+        </div>
+      </div>
+      <div id="loss-chart-wrap">
+        <canvas id="loss-chart" width="240" height="120"></canvas>
+      </div>
+      <div id="checkpoint-area">
+        <div class="panel-subtitle">Checkpoint</div>
+        <select id="checkpoint-select">
+          <option value="">Latest</option>
+        </select>
+        <button class="btn btn-secondary" id="btn-load-ckpt">Load</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

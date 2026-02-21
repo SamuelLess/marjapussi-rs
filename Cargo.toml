@@ -18,6 +18,11 @@ name = "parse"
 path = "src/bin/parse_legacy.rs"
 bench = false
 
+[[bin]]
+name = "ml_server"
+path = "src/bin/ml_server.rs"
+bench = false
+
 [dependencies]
 itertools = "0.14.0"
 strum = "0.27.1"
