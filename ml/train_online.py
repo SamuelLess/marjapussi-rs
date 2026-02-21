@@ -16,10 +16,9 @@ Recommended starting point:
   python ml/train_online.py --rounds 100 --games-per-round 200 --workers 8 --mc-rollouts 4 --device cuda
 """
 
-import argparse, collections, json, math, os, random, sys, time
+import argparse, collections, json, math, os, queue, random, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import Lock
 
 import torch
 import torch.nn as nn
@@ -44,22 +43,86 @@ Transition = collections.namedtuple("Transition",
     ["obs", "action_idx", "advantage", "pts_my", "pts_opp"])
 
 
-# ── Per-worker episode runner ─────────────────────────────────────────────────
+# ── Batched inference server ──────────────────────────────────────────────────
 
-def _model_select(model, obs, device):
-    """Run inference (called from worker thread; model is read-only)."""
-    try:
-        tensors = obs_to_tensors(obs)
-        with torch.no_grad():
-            logits, _, _ = model(tensors)
-        probs = F.softmax(logits[0], dim=-1)
-        return int(torch.multinomial(probs, 1).item())
-    except Exception:
-        return 0
+class BatchInferenceServer:
+    """
+    Accumulates inference requests from all worker threads and fires one
+    GPU forward pass per batch — avoids 32 serial kernel launches.
+    """
+    def __init__(self, model, device, max_batch: int = 64, timeout: float = 0.005):
+        self.model   = model
+        self.device  = device
+        self.max_batch = max_batch
+        self.timeout   = timeout
+        self._req  = queue.Queue()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def infer(self, obs) -> int:
+        """Block until inference result is available. Thread-safe."""
+        evt  = threading.Event()
+        slot = [0]
+        self._req.put((obs, evt, slot))
+        evt.wait()
+        return slot[0]
+
+    def _serve(self):
+        while not self._stop.is_set():
+            items = []
+            try:
+                items.append(self._req.get(timeout=self.timeout))
+                while len(items) < self.max_batch:
+                    try: items.append(self._req.get_nowait())
+                    except queue.Empty: break
+            except queue.Empty:
+                continue
+            if not items:
+                continue
+            self._run_batch(items)
+
+    def _run_batch(self, items):
+        obs_list = [it[0] for it in items]
+        try:
+            tensors_list = [obs_to_tensors(o) for o in obs_list]
+            B = len(tensors_list)
+            # Quick collate for inference only
+            max_s = max(t["token_ids"].shape[1] for t in tensors_list)
+            max_a = max(t["action_feats"].shape[1] for t in tensors_list)
+            obs_a = {k: torch.cat([t["obs_a"][k] for t in tensors_list], 0)
+                     for k in tensors_list[0]["obs_a"]}
+            tok = torch.zeros(B, max_s, dtype=torch.long)
+            tmask = torch.ones(B, max_s, dtype=torch.bool)
+            for i, t in enumerate(tensors_list):
+                L = t["token_ids"].shape[1]
+                tok[i,:L] = t["token_ids"][0]; tmask[i,:L] = t["token_mask"][0]
+            af = torch.zeros(B, max_a, 51)
+            am = torch.ones(B, max_a, dtype=torch.bool)
+            for i, t in enumerate(tensors_list):
+                A = t["action_feats"].shape[1]
+                af[i,:A] = t["action_feats"][0]; am[i,:A] = t["action_mask"][0]
+            dev = self.device
+            with torch.no_grad():
+                logits, _, _ = self.model({
+                    "obs_a":       {k: v.to(dev) for k,v in obs_a.items()},
+                    "token_ids":   tok.to(dev), "token_mask": tmask.to(dev),
+                    "action_feats": af.to(dev), "action_mask": am.to(dev),
+                })
+            probs = F.softmax(logits, dim=-1).cpu()
+            for i, (_, evt, slot) in enumerate(items):
+                slot[0] = int(torch.multinomial(probs[i], 1).item())
+                evt.set()
+        except Exception:
+            for _, evt, slot in items:
+                slot[0] = 0; evt.set()
+
+    def stop(self):
+        self._stop.set(); self._thread.join(timeout=1)
 
 
 def run_episode(model, device, mc_rollouts: int, stage: int,
-                lock: Lock) -> list[Transition]:
+                inference_server) -> list[Transition]:
     """
     Play one complete game. Returns a list of Transitions.
     stage 0 = heuristic (bootstrap), 1 = model.
@@ -79,9 +142,7 @@ def run_episode(model, device, mc_rollouts: int, stage: int,
             if stage == 0 or len(legal) == 1:
                 action_pos = heuristic_select(legal) if stage == 0 else 0
             else:
-                with lock:   # model inference is not thread-safe without lock
-                    action_pos = _model_select(model, obs, device)
-                action_pos = min(action_pos, len(legal) - 1)
+                action_pos = min(inference_server.infer(obs), len(legal) - 1)
 
             # MC advantage at multi-choice points
             advantage = 0.0
@@ -248,7 +309,6 @@ def train_online(
     except: pass
 
     best_wr = 0.0
-    lock    = Lock()  # shared lock for model inference across threads
 
     for rnd in range(rounds):
         t0 = time.time()
@@ -256,13 +316,15 @@ def train_online(
 
         # ── Collect games in parallel via threads ────────────────────────────
         model.eval()
+        server = BatchInferenceServer(model, device, max_batch=min(workers, 64))
         all_transitions: list[Transition] = []
 
         def collect_one(_):
-            return run_episode(model, device, mc_rollouts, stage, lock)
+            return run_episode(model, device, mc_rollouts, stage, server)
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
             results = list(pool.map(collect_one, range(games_per_round)))
+        server.stop()
 
         for eps in results:
             all_transitions.extend(eps)
