@@ -1,304 +1,210 @@
 """
-WebSocket + HTTP server for the Marjapussi AI visualization UI.
-
-Usage:
-    python ml/ui_server.py [--checkpoint path] [--port 8765]
-
+WebSocket + HTTP server for the Marjapussi AI UI.
+Run:  python ml/ui_server.py [--checkpoint CKPT] [--port 8765]
 Open: http://localhost:8765
 """
-
-import argparse
-import asyncio
-import json
-import os
-import subprocess
-import sys
-import math
+import argparse, asyncio, json, math, sys
 from pathlib import Path
 
 import aiohttp
 from aiohttp import web
-import asyncio
 
-sys.path.insert(0, str(Path(__file__).parent))
+ROOT = Path(__file__).parent.parent
+ML   = Path(__file__).parent
+UI   = ML / "ui"
+CHECKPOINT_DIR = ML / "checkpoints"
+RUNS_DIR       = ML / "runs"
+
+sys.path.insert(0, str(ML))
 
 try:
-    import torch
+    import torch, torch.nn.functional as F
     from model import MarjapussiNet
     from env import MarjapussiEnv, obs_to_tensors
-    import torch.nn.functional as F
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
-    print("PyTorch not installed — running in demo mode (random actions only)")
+    TORCH_OK = True
+except ImportError as e:
+    TORCH_OK = False
+    print(f"[warn] PyTorch not available: {e} — demo mode")
 
-RUNS_DIR = Path(__file__).parent / "runs"
-CHECKPOINT_DIR = Path(__file__).parent / "checkpoints"
-UI_DIR = Path(__file__).parent / "ui"
 
 # ── Game manager ──────────────────────────────────────────────────────────────
-
 class GameManager:
-    def __init__(self, checkpoint_path=None):
-        self.env = None
+    def __init__(self, checkpoint=None):
+        self.env  = None
+        self.obs  = None
+        self.done = True
+        self.info = {}
+        self.human_seats: set = set()
         self.model = None
-        self.human_seats = set()    # seat indices controlled by human
-        self.checkpoint_path = checkpoint_path
-        self._load_model()
-
-    def _load_model(self):
-        if not TORCH_AVAILABLE:
-            return
-        self.model = MarjapussiNet()
-        self.model.eval()
-        path = self.checkpoint_path or (CHECKPOINT_DIR / "latest.pt")
-        if Path(path).exists():
-            self.model.load_state_dict(torch.load(str(path), map_location='cpu'))
-            print(f"Loaded model from {path}")
+        if TORCH_OK:
+            self.model = MarjapussiNet(); self.model.eval()
+            p = checkpoint or (CHECKPOINT_DIR / "latest.pt")
+            if Path(p).exists():
+                self.model.load_state_dict(torch.load(str(p), map_location="cpu")); print(f"[model] loaded {p}")
 
     def new_game(self):
         if self.env:
             try: self.env.close()
             except: pass
-        self.env = MarjapussiEnv(pov=0)
-        self.obs = self.env.reset()
-        self.done = False
-        self.info = {}
+        bin_path = ROOT / "target" / "debug" / "ml_server.exe"
+        if not bin_path.exists():
+            bin_path = ROOT / "target" / "debug" / "ml_server"
+        if not bin_path.exists():
+            raise FileNotFoundError(
+                "ml_server binary not found — run: cargo build --bin ml_server")
+        self.env  = MarjapussiEnv(pov=0)
+        self.env.env_binary = str(bin_path)          # ensure right path
+        self.obs  = self.env.reset()
+        self.done = self.env.done
 
-    def current_state(self):
-        return {
-            'obs': self.obs,
-            'done': self.done,
-            'info': self.info,
-            'human_seats': list(self.human_seats),
-        }
+    def state(self):
+        return {"obs": self.obs, "done": self.done, "info": self.info,
+                "human_seats": list(self.human_seats)}
 
-    def ai_info_for(self, obs):
-        """Compute model policy info for all seats."""
-        seat_info = {}
-        if not TORCH_AVAILABLE or self.model is None:
-            return seat_info
-        # Only compute for POV seat (0) — other seat views would need separate obs
+    def ai_info(self):
+        if not TORCH_OK or self.model is None or self.obs is None:
+            return {}
         try:
-            tensors = obs_to_tensors(obs)
+            tensors = obs_to_tensors(self.obs)
             with torch.no_grad():
                 logits, _, _ = self.model(tensors)
-            logits = logits[0]
-            probs = F.softmax(logits, dim=-1).tolist()
-            legal = obs.get('legal_actions', [])
+            probs = F.softmax(logits[0], dim=-1).tolist()
+            legal = self.obs.get("legal_actions", [])
             entropy = -sum(p * math.log(p + 1e-9) for p in probs if p > 0)
-
-            from env import encode_legal_actions
-            from model import ACTION_LABELS as _  # reuse token labels
-
-            ACTION_TOKEN_LABELS = {
-                40: 'Play', 41: 'Bid', 42: 'Stop bid', 43: 'Pass cards',
-                44: 'Trump', 45: 'Ask pair', 46: 'Ask half',
-                47: 'Yes pair', 48: 'No pair', 49: 'Yes half', 50: 'No half',
-            }
-
+            ATOK = {40:"Spiel",41:"Biete",42:"Passe",43:"Gib",44:"Trumpf",
+                    45:"Paar?",46:"Halb?",47:"Ja-P",48:"Nein",49:"Ja-H",50:"Nein"}
+            VALS = ['6','7','8','9','U','O','K','10','A']
+            SUITS= ['♣','◆','◆','♥']
             prob_list = []
             for i, la in enumerate(legal):
-                if i >= len(probs):
-                    break
-                tok = la.get('action_token', 40)
-                label = ACTION_TOKEN_LABELS.get(tok, f'Act {tok}')
-                if la.get('card_idx') is not None:
-                    c = la['card_idx']
-                    suits = ['g', 'e', 's', 'r']
-                    vals = ['6','7','8','9','U','O','K','10','A']
-                    label += f" {vals[c%9]}♠{suits[c//9]}"
-                prob_list.append({'label': label, 'prob': probs[i]})
-
-            seat_info[0] = {'probs': prob_list, 'entropy': entropy}
+                if i >= len(probs): break
+                lbl = ATOK.get(la.get("action_token", 40), "?")
+                if la.get("card_idx") is not None:
+                    c = la["card_idx"]; lbl += f" {VALS[c%9]}{SUITS[c//9]}"
+                prob_list.append({"label": lbl, "prob": probs[i]})
+            return {0: {"probs": prob_list, "entropy": entropy}}
         except Exception as e:
-            print(f"ai_info error: {e}")
-        return seat_info
-
-    def step(self, action_list_idx: int):
-        if not self.env or self.done:
-            return
-        self.obs, self.done, self.info = self.env.step(action_list_idx)
+            return {}
 
     def ai_step(self):
-        """Let the AI pick and apply an action for the current seat."""
-        if not self.env or self.done:
-            return
-
-        legal = self.obs.get('legal_actions', [])
-        if not legal:
-            return
-
-        if TORCH_AVAILABLE and self.model is not None:
+        if self.done or self.obs is None: return
+        legal = self.obs.get("legal_actions", [])
+        if not legal: return
+        chosen = 0
+        if TORCH_OK and self.model is not None:
             try:
                 tensors = obs_to_tensors(self.obs)
-                with torch.no_grad():
-                    logits, _, _ = self.model(tensors)
+                with torch.no_grad(): logits, _, _ = self.model(tensors)
                 probs = F.softmax(logits[0], dim=-1)
-                action_pos = torch.multinomial(probs, 1).item()
-                action_pos = min(action_pos, len(legal) - 1)
-                chosen = legal[action_pos]
-            except:
-                chosen = legal[0]
-        else:
-            # Random fallback
-            import random
-            chosen = random.choice(legal)
+                chosen = int(torch.multinomial(probs, 1).item())
+                chosen = min(chosen, len(legal) - 1)
+            except: pass
+        self.obs, self.done, self.info = self.env.step(legal[chosen]["action_list_idx"])
 
-        self.step(chosen['action_list_idx'])
+    def step(self, action_list_idx):
+        self.obs, self.done, self.info = self.env.step(action_list_idx)
 
-    def load_checkpoint(self, name: str = 'latest'):
-        if not TORCH_AVAILABLE:
-            return
-        path = CHECKPOINT_DIR / f"{name}.pt"
-        if not path.exists() and not name.endswith('.pt'):
-            path = CHECKPOINT_DIR / f"{name}"
-        if path.exists():
-            self.model.load_state_dict(torch.load(str(path), map_location='cpu'))
-            self.model.eval()
-            print(f"Loaded checkpoint {path}")
+    def load_checkpoint(self, name):
+        if not TORCH_OK: return
+        p = CHECKPOINT_DIR / f"{name}.pt"
+        if not p.exists(): p = Path(name)
+        if p.exists():
+            self.model.load_state_dict(torch.load(str(p), map_location="cpu"))
+            self.model.eval(); print(f"[model] reloaded {p}")
 
 
-# ── WebSocket handler ──────────────────────────────────────────────────────────
-
-game = None
-clients = set()
+game    = None
+clients: set = set()
 
 async def ws_handler(request):
     ws = web.WebSocketResponse()
-    await ws.prepare(request)
-    clients.add(ws)
-
-    # Send initial state
-    if game.env:
-        await ws.send_str(json.dumps({
-            'type': 'game_state',
-            'data': game.current_state(),
-            'ai_info': game.ai_info_for(game.obs),
-        }))
-
+    await ws.prepare(request); clients.add(ws)
+    # Send current state on connect
+    if game.obs is not None:
+        await ws.send_str(json.dumps({"type":"game_state","data":game.state(),"ai_info":game.ai_info()}))
     async for msg in ws:
         if msg.type == aiohttp.WSMsgType.TEXT:
-            try:
-                cmd = json.loads(msg.data)
-                await handle_cmd(ws, cmd)
-            except Exception as e:
-                await ws.send_str(json.dumps({'type': 'error', 'message': str(e)}))
-        elif msg.type == aiohttp.WSMsgType.ERROR:
-            break
+            try: await handle(ws, json.loads(msg.data))
+            except Exception as e: await ws.send_str(json.dumps({"type":"error","message":str(e)}))
+        elif msg.type == aiohttp.WSMsgType.ERROR: break
+    clients.discard(ws); return ws
 
-    clients.discard(ws)
-    return ws
-
-
-async def handle_cmd(ws, cmd):
-    action = cmd.get('cmd')
-
-    if action == 'new_game':
+async def handle(ws, cmd):
+    act = cmd.get("cmd")
+    if act == "new_game":
         game.new_game()
+    elif act == "proceed":
+        if not game.done: game.ai_step()
+    elif act == "human_action":
+        game.step(cmd.get("action_list_idx", 0))
+    elif act == "set_seat":
+        s = cmd.get("seat", 0)
+        if cmd.get("human"): game.human_seats.add(s)
+        else: game.human_seats.discard(s)
+    elif act == "load_checkpoint":
+        game.load_checkpoint(cmd.get("checkpoint", "latest"))
+    await broadcast()
 
-    elif action == 'proceed':
-        if not game.done:
-            game.ai_step()
+async def broadcast():
+    msg = json.dumps({"type":"game_state","data":game.state(),"ai_info":game.ai_info()})
+    dead = set()
+    for c in clients:
+        try: await c.send_str(msg)
+        except: dead.add(c)
+    clients -= dead
 
-    elif action == 'human_action':
-        idx = cmd.get('action_list_idx', 0)
-        game.step(idx)
+async def watch_log(_app):
+    asyncio.create_task(_watch_log())
 
-    elif action == 'set_seat':
-        seat = cmd.get('seat', 0)
-        human = cmd.get('human', False)
-        if human:
-            game.human_seats.add(seat)
-        else:
-            game.human_seats.discard(seat)
-
-    elif action == 'load_checkpoint':
-        name = cmd.get('checkpoint', 'latest')
-        game.load_checkpoint(name)
-
-    # Broadcast updated state to all clients
-    state_msg = json.dumps({
-        'type': 'game_state',
-        'data': game.current_state(),
-        'ai_info': game.ai_info_for(game.obs) if game.obs else {},
-    })
-    for client in list(clients):
-        try:
-            await client.send_str(state_msg)
-        except:
-            clients.discard(client)
-
-
-# ── Training log watcher ───────────────────────────────────────────────────────
-
-async def watch_training_log():
-    """Tail ml/runs/latest/log.jsonl and push training stats to clients."""
+async def _watch_log():
     while True:
-        log_path = RUNS_DIR / "latest" / "log.jsonl"
-        if log_path.exists():
+        p = RUNS_DIR / "latest" / "log.jsonl"
+        if p.exists():
             try:
-                with open(log_path, 'r') as f:
-                    lines = f.readlines()
+                lines = p.read_text().splitlines()
                 for line in reversed(lines[-20:]):
-                    entry = json.loads(line.strip())
-                    if entry.get('event') in ('update', 'eval'):
-                        stats = {
-                            'game': entry.get('game'),
-                            'stage': entry.get('stage', 0),
-                            'loss': entry.get('losses', {}).get('total'),
-                            'win_rate': entry.get('win_rate'),
-                        }
-                        msg = json.dumps({'type': 'train_stats', 'data': stats})
-                        for client in list(clients):
-                            try:
-                                await client.send_str(msg)
-                            except:
-                                clients.discard(client)
+                    entry = json.loads(line)
+                    if entry.get("event") in ("update", "eval"):
+                        stats = {"game": entry.get("game"), "stage": entry.get("stage", 0),
+                                 "loss": entry.get("losses", {}).get("total"),
+                                 "win_rate": entry.get("win_rate")}
+                        msg = json.dumps({"type":"train_stats","data":stats})
+                        for c in list(clients):
+                            try: await c.send_str(msg)
+                            except: clients.discard(c)
                         break
-            except:
-                pass
+            except: pass
         await asyncio.sleep(2)
 
-
-# ── HTTP static file server ────────────────────────────────────────────────────
-
-async def index_handler(request):
-    return web.FileResponse(UI_DIR / 'index.html')
-
-
-# ── Main ───────────────────────────────────────────────────────────────────────
+async def index(request):
+    return web.FileResponse(UI / "index.html")
 
 def main():
     global game
+    p = argparse.ArgumentParser()
+    p.add_argument("--checkpoint", default=None)
+    p.add_argument("--port", type=int, default=8765)
+    args = p.parse_args()
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--checkpoint', default=None)
-    parser.add_argument('--port', type=int, default=8765)
-    args = parser.parse_args()
-
-    game = GameManager(checkpoint_path=args.checkpoint)
-    game.new_game()
+    game = GameManager(args.checkpoint)
+    try:
+        game.new_game()
+        print("[game] started OK")
+    except Exception as e:
+        print(f"[warn] Could not start game: {e}")
+        print("[warn] Build ml_server first: cargo build --bin ml_server")
 
     app = web.Application()
-    app.router.add_get('/ws', ws_handler)
-    app.router.add_get('/', index_handler)
-    app.router.add_static('/ui', UI_DIR)
+    app.router.add_get("/ws", ws_handler)
+    app.router.add_get("/", index)
+    app.router.add_static("/ui", UI)     # serve CSS/JS if needed
+    app.on_startup.append(watch_log)
 
-    async def start_watchers(app):
-        asyncio.create_task(watch_training_log())
-
-    app.on_startup.append(start_watchers)
-
-    print(f"\n🃏  Marjapussi AI UI")
-    print(f"   Open: http://localhost:{args.port}")
-    print(f"   PyTorch: {'available' if TORCH_AVAILABLE else 'NOT INSTALLED'}")
-    if TORCH_AVAILABLE and game.model:
-        print(f"   Model params: {game.model.param_count():,}")
+    print(f"\n🃏  Marjapussi KI  →  http://localhost:{args.port}")
+    print(f"   PyTorch: {'✓' if TORCH_OK else '✗ (demo mode)'}")
+    if TORCH_OK and game.model: print(f"   Params:  {game.model.param_count():,}")
     print()
-
     web.run_app(app, port=args.port, print=False)
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
