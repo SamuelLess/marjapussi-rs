@@ -415,6 +415,9 @@ def train_online(
     checkpoint: str | None = None,
     eval_every: int     = 10,
     ppo_epochs: int     = 3,
+    balance_opt_time: bool = False,
+    target_opt_sim_ratio: float = 1.0,
+    max_ppo_epochs: int = 24,
 ):
     configure_torch_runtime(device=device, workers=workers)
     use_amp = device.startswith("cuda")
@@ -429,6 +432,11 @@ def train_online(
 
     Log.success(f"Online training | rounds={rounds} | games/round={games_per_round} "
                 f"| workers={workers} | MC-rollouts={mc_rollouts} | ppo_epochs={ppo_epochs} | device={device}")
+    if balance_opt_time:
+        Log.info(
+            f"Adaptive optimization enabled: target ratio={target_opt_sim_ratio:.2f}, "
+            f"max_ppo_epochs={max_ppo_epochs}"
+        )
     Log.info(f"Params: {model.param_count():,}\n")
 
     run_dir  = RUNS_DIR / f"online_{int(time.time())}"
@@ -525,8 +533,18 @@ def train_online(
         t1 = time.time()
         loss_acc = collections.defaultdict(float)
         n_steps = 0
+        epoch = 0
+        target_opt_secs = gen_time * max(0.0, target_opt_sim_ratio) if balance_opt_time else None
+        while True:
+            if epoch >= max(1, ppo_epochs):
+                if not balance_opt_time:
+                    break
+                if epoch >= max(max_ppo_epochs, ppo_epochs):
+                    break
+                elapsed_opt = time.time() - t1
+                if target_opt_secs is None or elapsed_opt >= target_opt_secs:
+                    break
 
-        for epoch in range(ppo_epochs):
             random.shuffle(all_transitions)
             for start in range(0, n_trans, train_batch):
                 chunk = all_transitions[start:start + train_batch]
@@ -537,10 +555,15 @@ def train_online(
                 n_steps += 1
                 if n_steps % 10 == 0:
                     prog = min(1.0, (start + train_batch) / n_trans)
-                    Log.opt(f"Optimizing Round Batch (Epoch {epoch+1}/{ppo_epochs}): {prog:.1%}", end="")
+                    epoch_label = (
+                        f"{epoch+1}/>= {ppo_epochs}"
+                        if balance_opt_time else f"{epoch+1}/{ppo_epochs}"
+                    )
+                    Log.opt(f"Optimizing Round Batch (Epoch {epoch_label}): {prog:.1%}", end="")
             
             # Print newline after each epoch if we logged opt progress
             print()
+            epoch += 1
         sched.step()
 
         avg_loss = {k: v / max(n_steps, 1) for k, v in loss_acc.items()}
@@ -553,11 +576,12 @@ def train_online(
         print(f"  - Policy:   {policy_label}")
         print(f"  - Games:    {games_per_round} ({rate:.1f} games/s)")
         print(f"  - Samples:  {n_trans} transitions")
+        print(f"  - OptEpochs:{epoch}")
         print(f"  - Losses:   Total: {avg_loss.get('total',0):.4f} | Pol: {avg_loss.get('policy',0):.4f} | Val: {avg_loss.get('value',0):.4f} | Ent: {avg_loss.get('entropy',0):.4f} | Pts: {avg_loss.get('pts',0):.4f}")
         print(f"  - Time:     Sim: {gen_time:.1f}s | Opt: {train_time:.1f}s")
 
         log_entry = {"round": rnd+1, "stage": stage, "n_games": games_per_round,
-                     "n_transitions": n_trans, "losses": avg_loss,
+                     "n_transitions": n_trans, "losses": avg_loss, "opt_epochs": epoch,
                      "gen_secs": gen_time, "train_secs": train_time}
 
         # ── Evaluate + checkpoint ────────────────────────────────────────────
@@ -614,6 +638,12 @@ if __name__ == "__main__":
                    help="Evaluate win rate every N rounds")
     p.add_argument("--ppo-epochs",       type=int,   default=3,
                    help="Number of PPO optimization passes over collected data")
+    p.add_argument("--balance-opt-time", action="store_true",
+                   help="Keep optimizing each round until optimization time approaches simulation time")
+    p.add_argument("--target-opt-sim-ratio", type=float, default=1.0,
+                   help="Target optimization/simulation time ratio when --balance-opt-time is enabled")
+    p.add_argument("--max-ppo-epochs",   type=int,   default=24,
+                   help="Upper cap for PPO epochs per round when --balance-opt-time is enabled")
     args = p.parse_args()
 
     if torch.cuda.is_available():
@@ -631,4 +661,7 @@ if __name__ == "__main__":
         start_round=args.start_round,
         eval_every=args.eval_every,
         ppo_epochs=args.ppo_epochs,
+        balance_opt_time=args.balance_opt_time,
+        target_opt_sim_ratio=args.target_opt_sim_ratio,
+        max_ppo_epochs=args.max_ppo_epochs,
     )
