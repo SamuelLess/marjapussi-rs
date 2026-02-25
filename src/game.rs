@@ -134,6 +134,9 @@ pub fn current_time_string() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::cards::Suit;
+    use crate::game::gameevent::QuestionType;
+    use crate::game::player::{PlaceAtTable, PlayerTrumpPossibilities};
     use rand::prelude::IndexedMutRandom;
 
     #[test]
@@ -257,6 +260,124 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_trump_possibilities_only_move_upwards() {
+        let names = [
+            "S1".to_string(),
+            "S2".to_string(),
+            "S3".to_string(),
+            "S4".to_string(),
+        ];
+        let cards = [
+            vec![
+                "r-O".parse().unwrap(),
+                "r-K".parse().unwrap(),
+                "g-A".parse().unwrap(),
+                "g-Z".parse().unwrap(),
+                "g-9".parse().unwrap(),
+                "s-6".parse().unwrap(),
+                "s-7".parse().unwrap(),
+                "e-6".parse().unwrap(),
+                "e-7".parse().unwrap(),
+            ],
+            vec![
+                "r-A".parse().unwrap(),
+                "r-Z".parse().unwrap(),
+                "r-U".parse().unwrap(),
+                "r-9".parse().unwrap(),
+                "r-8".parse().unwrap(),
+                "r-7".parse().unwrap(),
+                "r-6".parse().unwrap(),
+                "s-A".parse().unwrap(),
+                "s-Z".parse().unwrap(),
+            ],
+            vec![
+                "s-K".parse().unwrap(),
+                "s-O".parse().unwrap(),
+                "s-U".parse().unwrap(),
+                "s-9".parse().unwrap(),
+                "s-8".parse().unwrap(),
+                "g-K".parse().unwrap(),
+                "g-O".parse().unwrap(),
+                "g-U".parse().unwrap(),
+                "g-8".parse().unwrap(),
+            ],
+            vec![
+                "e-A".parse().unwrap(),
+                "e-Z".parse().unwrap(),
+                "e-K".parse().unwrap(),
+                "e-O".parse().unwrap(),
+                "e-U".parse().unwrap(),
+                "e-9".parse().unwrap(),
+                "e-8".parse().unwrap(),
+                "g-7".parse().unwrap(),
+                "g-6".parse().unwrap(),
+            ],
+        ];
+        let mut game = Game::new(String::from("TrumpUp"), names, Some(cards));
+        let p0 = PlaceAtTable(0);
+
+        game.state.started = true;
+        game.state.phase = GamePhase::StartTrick;
+        game.state.player_at_turn = p0.clone();
+        game.legal_actions = game.legal_actions();
+
+        assert!(game.legal_actions.contains(&GameAction {
+            action_type: ActionType::AnnounceTrump(Suit::Red),
+            player: p0.clone(),
+        }));
+        assert!(game.legal_actions.contains(&GameAction {
+            action_type: ActionType::Question(QuestionType::Yours),
+            player: p0.clone(),
+        }));
+
+        game = game
+            .apply_action(GameAction {
+                action_type: ActionType::Question(QuestionType::Yours),
+                player: p0.clone(),
+            })
+            .unwrap();
+        assert_eq!(
+            game.state.player_at_place(p0.clone()).trump,
+            PlayerTrumpPossibilities::Yours
+        );
+
+        game.state.phase = GamePhase::StartTrick;
+        game.state.player_at_turn = p0.clone();
+        game.legal_actions = game.legal_actions();
+        assert!(game.legal_actions.contains(&GameAction {
+            action_type: ActionType::Question(QuestionType::Yours),
+            player: p0.clone(),
+        }));
+        assert!(!game.legal_actions.contains(&GameAction {
+            action_type: ActionType::AnnounceTrump(Suit::Red),
+            player: p0.clone(),
+        }));
+
+        game = game
+            .apply_action(GameAction {
+                action_type: ActionType::Question(QuestionType::YourHalf(Suit::Green)),
+                player: p0.clone(),
+            })
+            .unwrap();
+        assert_eq!(
+            game.state.player_at_place(p0.clone()).trump,
+            PlayerTrumpPossibilities::Ours
+        );
+
+        game.state.phase = GamePhase::StartTrick;
+        game.state.player_at_turn = p0.clone();
+        game.legal_actions = game.legal_actions();
+        assert!(!game.legal_actions.contains(&GameAction {
+            action_type: ActionType::Question(QuestionType::Yours),
+            player: p0.clone(),
+        }));
+        assert!(game.legal_actions.contains(&GameAction {
+            action_type: ActionType::Question(QuestionType::YourHalf(Suit::Red)),
+            player: p0,
+        }));
+    }
+
     pub fn test_random_game_random() {
         let mut game = helper_create_game();
         let mut actions = game.legal_actions.clone();
@@ -284,5 +405,11 @@ mod tests {
                 panic!("Game: {:?}\n Action: {:?}", game, select);
             }
         }
+        let total_points: Points = game
+            .state
+            .all_tricks
+            .iter()
+            .fold(Points(0), |acc, trick| acc + trick.points);
+        assert_eq!(total_points, Points(140));
     }
 }
