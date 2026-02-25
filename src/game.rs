@@ -405,5 +405,11 @@ mod tests {
                 panic!("Game: {:?}\n Action: {:?}", game, select);
             }
         }
+        let total_points: Points = game
+            .state
+            .all_tricks
+            .iter()
+            .fold(Points(0), |acc, trick| acc + trick.points);
+        assert_eq!(total_points, Points(140));
     }
 }

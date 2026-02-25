@@ -247,10 +247,14 @@ pub fn act_card(card: Card, next_game_state: &mut GameState) {
         // save trick
         let cards_in_last_trick: [Card; 4] =
             next_game_state.current_trick.clone().try_into().unwrap();
+        let mut trick_points = points_trick(cards_in_last_trick.to_vec());
+        if next_game_state.all_tricks.len() == 8 {
+            trick_points += Points(20);
+        }
         next_game_state.all_tricks.push(FinishedTrick {
             cards: cards_in_last_trick.clone(),
             winner: next_game_state.player_at_turn.clone(),
-            points: points_trick(cards_in_last_trick.try_into().unwrap()),
+            points: trick_points,
         });
     }
 }
