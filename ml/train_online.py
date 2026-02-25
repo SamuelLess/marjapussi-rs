@@ -16,7 +16,7 @@ Recommended starting point:
   python ml/train_online.py --rounds 100 --games-per-round 200 --workers 8 --mc-rollouts 4 --device cuda
 """
 
-import argparse, collections, json, os, random, sys, threading, time, warnings
+import argparse, collections, json, math, os, random, sys, threading, time, warnings
 import ctypes
 
 # Prevent Windows from going to sleep during multi-day runs
@@ -430,9 +430,14 @@ def train_online(
     checkpoint: str | None = None,
     eval_every: int     = 10,
     ppo_epochs: int     = 3,
+    min_ppo_epochs: int = 2,
     balance_opt_time: bool = False,
     target_opt_sim_ratio: float = 1.0,
-    max_ppo_epochs: int = 24,
+    max_ppo_epochs: int = 5,
+    target_kl: float = 0.03,
+    max_clipfrac: float = 0.40,
+    min_policy_improve: float = 0.001,
+    opt_early_stop_patience: int = 1,
     adv_query_mode: str = "target",
     adv_non_target_prob: float = 0.0,
     max_adv_calls_per_episode: int = 1,
@@ -450,11 +455,14 @@ def train_online(
 
     Log.success(f"Online training | rounds={rounds} | games/round={games_per_round} "
                 f"| workers={workers} | MC-rollouts={mc_rollouts} | ppo_epochs={ppo_epochs} | device={device}")
+    Log.info(
+        "Optimization control: "
+        f"min_epochs={min_ppo_epochs}, base_epochs={ppo_epochs}, max_epochs={max_ppo_epochs}, "
+        f"target_kl={target_kl:.3f}, max_clipfrac={max_clipfrac:.2f}, "
+        f"min_policy_improve={min_policy_improve:.4f}, patience={opt_early_stop_patience}"
+    )
     if balance_opt_time:
-        Log.info(
-            f"Adaptive optimization enabled: target ratio={target_opt_sim_ratio:.2f}, "
-            f"max_ppo_epochs={max_ppo_epochs}"
-        )
+        Log.info(f"Time balancing enabled: target opt/sim ratio={target_opt_sim_ratio:.2f}")
     Log.info(
         f"Adv branching: mode={adv_query_mode}, non_target_prob={adv_non_target_prob:.2f}, "
         f"max_calls_per_episode={max_adv_calls_per_episode}"
@@ -560,15 +568,14 @@ def train_online(
         n_steps = 0
         epoch = 0
         target_opt_secs = gen_time * max(0.0, target_opt_sim_ratio) if balance_opt_time else None
-        while True:
-            if epoch >= max(1, ppo_epochs):
-                if not balance_opt_time:
-                    break
-                if epoch >= max(max_ppo_epochs, ppo_epochs):
-                    break
-                elapsed_opt = time.time() - t1
-                if target_opt_secs is None or elapsed_opt >= target_opt_secs:
-                    break
+        required_epochs = max(1, ppo_epochs, min_ppo_epochs)
+        max_epochs = max(required_epochs, max_ppo_epochs)
+        no_improve_epochs = 0
+        prev_epoch_policy: float | None = None
+        invalid_batch_detected = False
+        while epoch < max_epochs:
+            epoch_acc = collections.defaultdict(float)
+            epoch_steps = 0
 
             random.shuffle(all_transitions)
             for start in range(0, n_trans, train_batch):
@@ -576,20 +583,60 @@ def train_online(
                 batch = collate(chunk, device)
                 if batch is None: continue
                 losses = train_step(model, opt, scaler, batch, use_amp, train_phase=train_phase)
+                if not math.isfinite(float(losses.get("total", float("nan")))):
+                    invalid_batch_detected = True
+                    Log.warn("Stopping optimization early due to non-finite batch loss.")
+                    break
                 for k, v in losses.items(): loss_acc[k] += v
+                for k, v in losses.items(): epoch_acc[k] += v
                 n_steps += 1
+                epoch_steps += 1
                 if n_steps % 10 == 0:
                     prog = min(1.0, (start + train_batch) / n_trans)
-                    epoch_label = (
-                        f"{epoch+1}/>= {ppo_epochs}"
-                        if balance_opt_time else f"{epoch+1}/{ppo_epochs}"
-                    )
+                    epoch_label = f"{epoch+1}/{max_epochs}"
                     Log.opt(f"Optimizing Round Batch (Epoch {epoch_label}): {prog:.1%}", end="")
+            if invalid_batch_detected:
+                print()
+                break
             
             # Print newline after each epoch if we logged opt progress
             print()
             epoch += 1
-        sched.step()
+
+            if epoch < required_epochs:
+                continue
+
+            epoch_avg = {k: (epoch_acc[k] / max(epoch_steps, 1)) for k in epoch_acc}
+            cur_policy = float(epoch_avg.get("policy", 0.0))
+            cur_kl = float(epoch_avg.get("approx_kl", 0.0))
+            cur_clipfrac = float(epoch_avg.get("clipfrac", 0.0))
+
+            if prev_epoch_policy is not None and (prev_epoch_policy - cur_policy) < min_policy_improve:
+                no_improve_epochs += 1
+            else:
+                no_improve_epochs = 0
+            prev_epoch_policy = cur_policy
+
+            stop_reason = None
+            if target_kl > 0 and cur_kl >= target_kl:
+                stop_reason = f"KL {cur_kl:.4f} >= {target_kl:.4f}"
+            elif max_clipfrac > 0 and cur_clipfrac >= max_clipfrac:
+                stop_reason = f"clipfrac {cur_clipfrac:.3f} >= {max_clipfrac:.3f}"
+            elif no_improve_epochs > opt_early_stop_patience:
+                stop_reason = (
+                    f"policy improvement below {min_policy_improve:.4f} for "
+                    f"{no_improve_epochs} epochs"
+                )
+            elif balance_opt_time and target_opt_secs is not None and (time.time() - t1) >= target_opt_secs:
+                stop_reason = f"reached time target ({target_opt_secs:.1f}s)"
+
+            if stop_reason is not None:
+                Log.opt(f"Stopping optimization at epoch {epoch}: {stop_reason}")
+                break
+        if n_steps > 0:
+            sched.step()
+        else:
+            Log.warn("Skipping LR scheduler step because no optimizer updates were applied this round.")
 
         avg_loss = {k: v / max(n_steps, 1) for k, v in loss_acc.items()}
         train_time = time.time() - t1
@@ -602,7 +649,7 @@ def train_online(
         print(f"  - Games:    {games_per_round} ({rate:.1f} games/s)")
         print(f"  - Samples:  {n_trans} transitions")
         print(f"  - OptEpochs:{epoch}")
-        print(f"  - Losses:   Total: {avg_loss.get('total',0):.4f} | Pol: {avg_loss.get('policy',0):.4f} | Val: {avg_loss.get('value',0):.4f} | Ent: {avg_loss.get('entropy',0):.4f} | Pts: {avg_loss.get('pts',0):.4f}")
+        print(f"  - Losses:   Total: {avg_loss.get('total',0):.4f} | Pol: {avg_loss.get('policy',0):.4f} | Val: {avg_loss.get('value',0):.4f} | Ent: {avg_loss.get('entropy',0):.4f} | Pts: {avg_loss.get('pts',0):.4f} | KL: {avg_loss.get('approx_kl',0):.4f} | Clip: {avg_loss.get('clipfrac',0):.3f}")
         print(f"  - Time:     Sim: {gen_time:.1f}s | Opt: {train_time:.1f}s")
 
         log_entry = {"round": rnd+1, "stage": stage, "n_games": games_per_round,
@@ -663,12 +710,22 @@ if __name__ == "__main__":
                    help="Evaluate win rate every N rounds")
     p.add_argument("--ppo-epochs",       type=int,   default=3,
                    help="Number of PPO optimization passes over collected data")
+    p.add_argument("--min-ppo-epochs",   type=int,   default=2,
+                   help="Minimum PPO epochs per round before any early-stop condition can trigger")
     p.add_argument("--balance-opt-time", action="store_true",
-                   help="Keep optimizing each round until optimization time approaches simulation time")
+                   help="Use simulation/optimization time ratio as an additional stop condition")
     p.add_argument("--target-opt-sim-ratio", type=float, default=1.0,
-                   help="Target optimization/simulation time ratio when --balance-opt-time is enabled")
-    p.add_argument("--max-ppo-epochs",   type=int,   default=24,
-                   help="Upper cap for PPO epochs per round when --balance-opt-time is enabled")
+                   help="Optimization/simulation time ratio target when --balance-opt-time is enabled")
+    p.add_argument("--max-ppo-epochs",   type=int,   default=5,
+                   help="Hard cap for PPO epochs per round")
+    p.add_argument("--target-kl",        type=float, default=0.03,
+                   help="Early-stop PPO when per-epoch approx KL exceeds this")
+    p.add_argument("--max-clipfrac",     type=float, default=0.40,
+                   help="Early-stop PPO when per-epoch clip fraction exceeds this")
+    p.add_argument("--min-policy-improve", type=float, default=0.001,
+                   help="Minimum per-epoch policy-loss improvement to keep training the same round data")
+    p.add_argument("--opt-early-stop-patience", type=int, default=1,
+                   help="Allowed consecutive low-improvement epochs before early-stop")
     p.add_argument("--adv-query-mode",   type=str, default="target",
                    choices=["target", "target_plus_stochastic", "stochastic", "all"],
                    help="Where to run counterfactual advantage queries")
@@ -693,9 +750,14 @@ if __name__ == "__main__":
         start_round=args.start_round,
         eval_every=args.eval_every,
         ppo_epochs=args.ppo_epochs,
+        min_ppo_epochs=args.min_ppo_epochs,
         balance_opt_time=args.balance_opt_time,
         target_opt_sim_ratio=args.target_opt_sim_ratio,
         max_ppo_epochs=args.max_ppo_epochs,
+        target_kl=args.target_kl,
+        max_clipfrac=args.max_clipfrac,
+        min_policy_improve=args.min_policy_improve,
+        opt_early_stop_patience=args.opt_early_stop_patience,
         adv_query_mode=args.adv_query_mode,
         adv_non_target_prob=args.adv_non_target_prob,
         max_adv_calls_per_episode=args.max_adv_calls_per_episode,

@@ -36,6 +36,8 @@ def train_step(model, opt, scaler, batch, use_amp: bool, train_phase: str = "tri
         surr1 = ratio * adv
         surr2 = torch.clamp(ratio, 1.0 - clip_epsilon, 1.0 + clip_epsilon) * adv
         policy_loss = -torch.min(surr1, surr2).mean()
+        approx_kl = (safe_log_prob_old - chosen_lp_clamped).mean()
+        clipfrac = ((ratio - 1.0).abs() > clip_epsilon).float().mean()
         
         # Value Loss
         value_loss = F.mse_loss(value_pred, batch["value"])
@@ -84,7 +86,9 @@ def train_step(model, opt, scaler, batch, use_amp: bool, train_phase: str = "tri
             "policy": float('nan'), 
             "value": float('nan'),
             "entropy": float('nan'),
-            "pts": float('nan')
+            "pts": float('nan'),
+            "approx_kl": float('nan'),
+            "clipfrac": float('nan'),
         }
 
     opt.zero_grad(set_to_none=True)
@@ -110,5 +114,7 @@ def train_step(model, opt, scaler, batch, use_amp: bool, train_phase: str = "tri
         "policy": policy_loss.item() if grads_valid else float('nan'), 
         "value": value_loss.item() if grads_valid else float('nan'),
         "entropy": entropy.item() if grads_valid else float('nan'),
-        "pts": pts_loss.item() if grads_valid else float('nan')
+        "pts": pts_loss.item() if grads_valid else float('nan'),
+        "approx_kl": approx_kl.item() if grads_valid else float('nan'),
+        "clipfrac": clipfrac.item() if grads_valid else float('nan'),
     }
