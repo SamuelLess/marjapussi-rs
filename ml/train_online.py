@@ -127,6 +127,9 @@ def run_episode(
     force_heuristic_bidding: bool = False,
     force_heuristic_passing: bool = False,
     pov: int | None = None,
+    adv_query_mode: str = "target",
+    adv_non_target_prob: float = 0.0,
+    max_adv_calls_per_episode: int = 1,
 ) -> list[Transition]:
     """
     Play one complete game and return training transitions for POV-controlled decisions only.
@@ -192,7 +195,19 @@ def run_episode(
                     else:
                         is_target = (trick_no == start_trick) and not is_bid and not is_pass
 
-                    if is_target:
+                    should_query = False
+                    if n_adv_calls < max_adv_calls_per_episode:
+                        if adv_query_mode == "all":
+                            should_query = True
+                        elif adv_query_mode == "stochastic":
+                            should_query = random.random() < adv_non_target_prob
+                        elif adv_query_mode == "target_plus_stochastic":
+                            should_query = is_target or (random.random() < adv_non_target_prob)
+                        else:
+                            # default: "target"
+                            should_query = is_target
+
+                    if should_query:
                         t0_adv = time.perf_counter()
                         try:
                             advs = env.get_advantages(policy="heuristic", num_rollouts=mc_rollouts)
@@ -418,6 +433,9 @@ def train_online(
     balance_opt_time: bool = False,
     target_opt_sim_ratio: float = 1.0,
     max_ppo_epochs: int = 24,
+    adv_query_mode: str = "target",
+    adv_non_target_prob: float = 0.0,
+    max_adv_calls_per_episode: int = 1,
 ):
     configure_torch_runtime(device=device, workers=workers)
     use_amp = device.startswith("cuda")
@@ -437,6 +455,10 @@ def train_online(
             f"Adaptive optimization enabled: target ratio={target_opt_sim_ratio:.2f}, "
             f"max_ppo_epochs={max_ppo_epochs}"
         )
+    Log.info(
+        f"Adv branching: mode={adv_query_mode}, non_target_prob={adv_non_target_prob:.2f}, "
+        f"max_calls_per_episode={max_adv_calls_per_episode}"
+    )
     Log.info(f"Params: {model.param_count():,}\n")
 
     run_dir  = RUNS_DIR / f"online_{int(time.time())}"
@@ -497,7 +519,10 @@ def train_online(
                                   start_trick=curriculum_trick,
                                   verbose_timing=(game_idx == 0),
                                   force_heuristic_bidding=force_bidding,
-                                  force_heuristic_passing=force_passing)
+                                  force_heuristic_passing=force_passing,
+                                  adv_query_mode=adv_query_mode,
+                                  adv_non_target_prob=adv_non_target_prob,
+                                  max_adv_calls_per_episode=max_adv_calls_per_episode)
             finally:
                 pool_envs.put(env)
             
@@ -644,6 +669,13 @@ if __name__ == "__main__":
                    help="Target optimization/simulation time ratio when --balance-opt-time is enabled")
     p.add_argument("--max-ppo-epochs",   type=int,   default=24,
                    help="Upper cap for PPO epochs per round when --balance-opt-time is enabled")
+    p.add_argument("--adv-query-mode",   type=str, default="target",
+                   choices=["target", "target_plus_stochastic", "stochastic", "all"],
+                   help="Where to run counterfactual advantage queries")
+    p.add_argument("--adv-non-target-prob", type=float, default=0.0,
+                   help="Probability to branch on non-target decisions (used by stochastic modes)")
+    p.add_argument("--max-adv-calls-per-episode", type=int, default=1,
+                   help="Hard cap of advantage-query calls per episode")
     args = p.parse_args()
 
     if torch.cuda.is_available():
@@ -664,4 +696,7 @@ if __name__ == "__main__":
         balance_opt_time=args.balance_opt_time,
         target_opt_sim_ratio=args.target_opt_sim_ratio,
         max_ppo_epochs=args.max_ppo_epochs,
+        adv_query_mode=args.adv_query_mode,
+        adv_non_target_prob=args.adv_non_target_prob,
+        max_adv_calls_per_episode=args.max_adv_calls_per_episode,
     )

@@ -39,12 +39,12 @@ build-ml-server-release:
 # Train the model with 512 rounds, 128 games per round, and checkpoint every 16 rounds (total 65,536 games)
 train-65k: setup-ml
     @echo "Running training using virtual environment python: {{python}}"
-    ML_SERVER_BIN={{ml_server_bin}} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {{python}} ml/train_online.py --rounds 512 --games-per-round 128 --workers 32 --mc-rollouts 4 --device cuda --eval-every 16 --balance-opt-time --target-opt-sim-ratio 1.0 --max-ppo-epochs 24
+    ML_SERVER_BIN={{ml_server_bin}} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {{python}} ml/train_online.py --rounds 512 --games-per-round 128 --workers 32 --mc-rollouts 4 --device cuda --eval-every 16 --balance-opt-time --target-opt-sim-ratio 1.0 --max-ppo-epochs 24 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3
 
 # Resume training from a specific checkpoint and start round
 resume-train run_name="latest" start_round="10": setup-ml
     @echo "Resuming training using virtual environment python: {{python}}"
-    ML_SERVER_BIN={{ml_server_bin}} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {{python}} ml/train_online.py --rounds 512 --games-per-round 128 --workers 32 --mc-rollouts 4 --device cuda --eval-every 16 --checkpoint ml/checkpoints/{{run_name}}.pt --start-round {{start_round}} --balance-opt-time --target-opt-sim-ratio 1.0 --max-ppo-epochs 24
+    ML_SERVER_BIN={{ml_server_bin}} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {{python}} ml/train_online.py --rounds 512 --games-per-round 128 --workers 32 --mc-rollouts 4 --device cuda --eval-every 16 --checkpoint ml/checkpoints/{{run_name}}.pt --start-round {{start_round}} --balance-opt-time --target-opt-sim-ratio 1.0 --max-ppo-epochs 24 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3
 
 # Build and run the UI server (Ctrl+C kills both Python and the Rust engine)
 ui: setup-ml
