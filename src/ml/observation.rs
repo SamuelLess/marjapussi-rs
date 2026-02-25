@@ -692,7 +692,12 @@ fn build_legal_actions(game: &Game, pov: &PlaceAtTable) -> Vec<LegalActionObs> {
                 card_idx: None,
                 suit_idx: None,
                 bid_value: None,
-                pass_cards: Some(cards.iter().map(card_index).collect()),
+                // Do not leak exact passed cards when it's not the POV's turn.
+                pass_cards: if game.state.player_at_turn == *pov {
+                    Some(cards.iter().map(card_index).collect())
+                } else {
+                    None
+                },
                 action_list_idx: idx,
             },
             // Skip undo/start from ML training
@@ -764,28 +769,6 @@ impl From<Observation> for ObservationJson {
 mod tests {
     use super::*;
     use crate::game::Game;
-    use rand::seq::SliceRandom;
-
-    fn start_game_to_tricks(tricks: usize) -> Game {
-        let names = ["P0", "P1", "P2", "P3"].map(|s| s.to_string());
-        let mut game = Game::new("test".to_string(), names, None);
-        let mut actions = game.legal_actions.clone();
-        // Start all 4 players
-        for _ in 0..4 {
-            game = game.apply_action(actions.pop().unwrap()).unwrap();
-            actions = game.legal_actions.clone();
-        }
-        // Play through quickly: always pick first legal action
-        let mut moves = 0;
-        while !game.ended() && moves < 200 {
-            let actions = game.legal_actions.clone();
-            if actions.is_empty() { break; }
-            game = game.apply_action(actions[0].clone()).unwrap();
-            moves += 1;
-            // Stop early check not implemented; just run full game
-        }
-        game
-    }
 
     #[test]
     fn test_observation_builds() {

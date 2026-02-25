@@ -13,7 +13,7 @@ class Log:
     @staticmethod
     def error(msg):   print(f"\033[91m[ERROR]\033[0m {msg}")
     @staticmethod
-    def phase(name):  print(f"\n\033[1;95m━━━ {name.upper()} ━━━\033[0m")
+    def phase(name):  print(f"\n\033[1;95m=== {name.upper()} ===\033[0m")
     @staticmethod
     def sim(msg, end="\n"): print(f"\r\033[96m[SIM]\033[0m {msg}", end=end, flush=True)
     @staticmethod

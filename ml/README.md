@@ -532,7 +532,7 @@ Each step: Python sends `{"action": <token_id>}` on stdin, Rust responds with `{
 | Human game data required? | **No** — bootstrapping curriculum (random → heuristic → self-play) |
 | Python interface | **JSON stdio** (spawn Rust binary as subprocess) |
 | Python framework | **Pure PyTorch** |
-| Model size | **~450K params** (see §4.8); scale up only if underfitting |
+| Model size | **~10M params** (see §4.8); scale up only if underfitting |
 | Heuristic baseline | **Yes, built first** — needed for stage 1 and evaluation |
 | Evaluation metric | Win rate vs heuristic + avg score diff, every 200 games |
 

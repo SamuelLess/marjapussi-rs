@@ -85,10 +85,10 @@ def collate(records: list[dict]):
             if "chosen_advantage" in r:
                 adv = float(r["chosen_advantage"])
             else:
-                my_pts = r.get("outcome_pts_my_team", 60) / 120.0
-                adv = my_pts * 2.0 - 1.0   # map [0,1] → [-1,1]
-            pts_my  = r.get("outcome_pts_my_team", 60) / 120.0
-            pts_opp = r.get("outcome_pts_opp", 60) / 120.0
+                my_pts = r.get("outcome_pts_my_team", 210) / 420.0
+                adv = my_pts * 2.0 - 1.0   # map [0,1] to [-1,1]
+            pts_my  = r.get("outcome_pts_my_team", 210) / 420.0
+            pts_opp = r.get("outcome_pts_opp", 210) / 420.0
             valid.append((t, a, adv, pts_my, pts_opp))
         except Exception:
             continue
@@ -147,14 +147,14 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
     try:
         n_lines = sum(1 for _ in open(data_path))
         steps_per_epoch = n_lines // batch
-        print(f"Dataset: ~{n_lines:,} records → ~{steps_per_epoch:,} steps/epoch")
+        print(f"Dataset: ~{n_lines:,} records -> ~{steps_per_epoch:,} steps/epoch")
     except:
         steps_per_epoch = 100_000
 
     sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs * steps_per_epoch)
 
     for epoch in range(epochs):
-        print(f"\n── Epoch {epoch+1}/{epochs} ──────────────────────────")
+        print(f"\n== Epoch {epoch+1}/{epochs} ==")
         ds = NdJsonDataset(data_path, shuffle_buf=min(100_000, batch * 200), epochs=1)
         loader = DataLoader(ds, batch_size=batch, collate_fn=collate,
                             num_workers=workers, worker_init_fn=worker_init,
@@ -189,7 +189,7 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
                 log_p   = F.log_softmax(logits, dim=-1)
                 chosen_lp = log_p.gather(1, ai.unsqueeze(1)).squeeze(1)
                 # Advantage-weighted BC: good moves get stronger gradient
-                weights = F.relu(adv) + 0.1   # always ≥ 0.1 to learn from all moves
+                weights = F.relu(adv) + 0.1   # always >= 0.1 to learn from all moves
                 bc_loss = -(chosen_lp * weights).mean()
 
                 # Points regression (auxiliary)
@@ -217,7 +217,7 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
         ckpt_path = CKPT_DIR / f"epoch_{epoch+1}.pt"
         torch.save(model.state_dict(), ckpt_path)
         torch.save(model.state_dict(), CKPT_DIR / "latest.pt")
-        print(f"  → Saved {ckpt_path}")
+        print(f"  -> Saved {ckpt_path}")
 
     print("\nTraining done. Checkpoint: ml/checkpoints/latest.pt")
     print("Next: python ml/train.py --checkpoint ml/checkpoints/latest.pt  (self-play fine-tune)")

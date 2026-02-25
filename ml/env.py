@@ -12,16 +12,34 @@ from typing import Optional
 import torch
 import torch.nn.functional as F
 
-from model import MarjapussiNet, build_card_features_batch, NUM_CARDS
+from model import build_card_features_batch, NUM_CARDS
 
-# Prefer release binary for speed, fall back to debug
-possible_paths = [
-    Path(__file__).parent.parent / "target" / "release" / "ml_server.exe",
-    Path(__file__).parent.parent / "target" / "release" / "ml_server",
-    Path(__file__).parent.parent / "target" / "debug" / "ml_server.exe",
-    Path(__file__).parent.parent / "target" / "debug" / "ml_server",
-]
-BINARY_PATH = next((p for p in possible_paths if p.exists()), possible_paths[0])
+def resolve_ml_server_binary(binary_path: Optional[str | Path] = None) -> Path:
+    """Resolve the ml_server binary path with stable override semantics."""
+    if binary_path is not None:
+        p = Path(binary_path)
+        if not p.exists():
+            raise FileNotFoundError(f"ml_server binary not found at {p}")
+        return p
+
+    env_override = os.getenv("ML_SERVER_BIN")
+    if env_override:
+        p = Path(env_override)
+        if not p.exists():
+            raise FileNotFoundError(f"ML_SERVER_BIN points to missing binary: {p}")
+        return p
+
+    # Prefer whichever binary (release/debug) is newest to avoid stale builds.
+    candidates = [
+        Path(__file__).parent.parent / "target" / "release" / "ml_server.exe",
+        Path(__file__).parent.parent / "target" / "release" / "ml_server",
+        Path(__file__).parent.parent / "target" / "debug" / "ml_server.exe",
+        Path(__file__).parent.parent / "target" / "debug" / "ml_server",
+    ]
+    existing = [p for p in candidates if p.exists()]
+    if existing:
+        return max(existing, key=lambda p: p.stat().st_mtime)
+    return candidates[0]
 
 
 def _send(proc: subprocess.Popen, msg: dict) -> dict:
@@ -47,21 +65,22 @@ class MarjapussiEnv:
     Manages one game instance via the Rust ml_server subprocess.
     """
 
-    def __init__(self, pov: int = 0):
+    def __init__(self, pov: int = 0, binary_path: Optional[str | Path] = None):
         self.pov = pov
         self.proc: Optional[subprocess.Popen] = None
         self._obs: Optional[dict] = None
         self._done = False
+        self.binary_path = resolve_ml_server_binary(binary_path)
         self._start_proc()
 
     def _start_proc(self):
-        if not BINARY_PATH.exists():
+        if not self.binary_path.exists():
             raise FileNotFoundError(
-                f"ml_server binary not found at {BINARY_PATH}. "
+                f"ml_server binary not found at {self.binary_path}. "
                 "Run: cargo build --bin ml_server"
             )
         self.proc = subprocess.Popen(
-            [str(BINARY_PATH)],
+            [str(self.binary_path)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -143,9 +162,11 @@ class MarjapussiEnv:
 
     def close(self):
         if self.proc:
-            self.proc.stdin.close()
-            self.proc.terminate()
-            self.proc.wait()
+            if self.proc.stdin and not self.proc.stdin.closed:
+                self.proc.stdin.close()
+            if self.proc.poll() is None:
+                self.proc.terminate()
+                self.proc.wait()
 
 
 # ── Observation → Tensor conversion ───────────────────────────────────────────
@@ -253,6 +274,17 @@ def encode_legal_actions(legal: list[dict]) -> tuple[torch.Tensor, torch.Tensor]
             val_oh = F.one_hot(torch.tensor(c % 9), 9).float()
             feats[0, i, 15:19] = suit_oh
             feats[0, i, 19:28] = val_oh
+        elif la.get('pass_cards'):
+            # Encode pass actions by suit/value histograms so different pass sets are learnable.
+            cards = la['pass_cards']
+            suit_hist = torch.zeros(4)
+            val_hist = torch.zeros(9)
+            denom = float(max(len(cards), 1))
+            for c in cards:
+                suit_hist[c // 9] += 1.0
+                val_hist[c % 9] += 1.0
+            feats[0, i, 15:19] = suit_hist / denom
+            feats[0, i, 19:28] = val_hist / denom
 
         # Suit features [28..31]
         if la.get('suit_idx') is not None:

@@ -5,9 +5,9 @@ Each round:
   1. Play N games with the CURRENT model (quality improves every round)
   2. At each multi-choice decision: ask Rust for MC advantages (try_all_actions)
   3. Train on the batch (advantage-weighted BC + points regression)
-  4. Save checkpoint → next round uses the improved policy
+  4. Save checkpoint; next round uses the improved policy
 
-This means training data quality grows automatically — no stale 1M-game dumps.
+This means training data quality grows automatically; no stale 1M-game dumps.
 
 Usage:
   python ml/train_online.py --rounds 50 --games-per-round 500 --workers 8 --mc-rollouts 8 --device cuda
@@ -16,7 +16,7 @@ Recommended starting point:
   python ml/train_online.py --rounds 100 --games-per-round 200 --workers 8 --mc-rollouts 4 --device cuda
 """
 
-import argparse, collections, json, math, os, queue, random, sys, threading, time, warnings
+import argparse, collections, json, os, random, sys, threading, time, warnings
 import ctypes
 
 # Prevent Windows from going to sleep during multi-day runs
@@ -33,15 +33,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.amp import GradScaler, autocast
 
 sys.path.insert(0, str(Path(__file__).parent))
 from model import MarjapussiNet
 from env import MarjapussiEnv, obs_to_tensors
-from self_play import compute_advantages
 
 CKPT_DIR = Path(__file__).parent / "checkpoints"
 RUNS_DIR  = Path(__file__).parent / "runs"
@@ -53,23 +50,86 @@ from train.pool import BatchInferenceServer, EnvPool
 from train.loss import train_step
 
 
-def run_episode(env: MarjapussiEnv, model, device, mc_rollouts: int, stage: int,
-                inference_server, start_trick: int = None, verbose_timing: bool = False, seed: int = None,
-                force_heuristic_bidding: bool = False,
-                force_heuristic_passing: bool = False) -> list[Transition]:
+def _is_bidding_action(legal: list[dict]) -> bool:
+    return bool(legal and legal[0].get("action_token") in (41, 42))
+
+
+def _is_passing_action(legal: list[dict]) -> bool:
+    return bool(legal and legal[0].get("action_token") == 43)
+
+
+def _pov_team_points(info: dict, pov_party: int) -> tuple[float, float]:
+    team_points = info.get("team_points", [0, 0])
+    t0 = float(team_points[0])
+    t1 = float(team_points[1])
+    return (t0, t1) if pov_party == 0 else (t1, t0)
+
+
+def _contract_reward_from_pov(info: dict, pov_party: int) -> tuple[float, int, int, int | None]:
     """
-    Play one complete game. Returns a list of Transitions.
-    stage 0 = heuristic (bootstrap), 1 = model.
+    Return (terminal_reward_from_pov, tricks_party_0, tricks_party_1, playing_party_abs).
+    Reward is aligned to contract outcome (including Schwarz multiplier), not raw trick points.
     """
-    transitions = []
+    pts_team0, pts_team1 = info.get("team_points", [0, 0])
+    tricks_party_0 = sum(1 for t in info.get("tricks", []) if t["winner"] % 2 == 0)
+    tricks_party_1 = sum(1 for t in info.get("tricks", []) if t["winner"] % 2 == 1)
+
+    playing_party_raw = info.get("playing_party")
+    playing_party_abs = None if playing_party_raw is None else int(playing_party_raw)
+    if playing_party_abs is None:
+        # Pass game: small constant outcome reward based on who got more points.
+        base_passgame_reward = 115.0 / 420.0
+        pov_pts, opp_pts = _pov_team_points(info, pov_party)
+        if pov_pts > opp_pts:
+            return base_passgame_reward, tricks_party_0, tricks_party_1, None
+        if opp_pts > pov_pts:
+            return -base_passgame_reward, tricks_party_0, tricks_party_1, None
+        return 0.0, tricks_party_0, tricks_party_1, None
+
+    game_value = float(info.get("game_value", 0)) / 420.0
+    schwarz_mult = 2.0 if info.get("schwarz", False) else 1.0
+    won_contract = bool(info.get("won", False))
+    is_playing_team = (playing_party_abs == pov_party)
+
+    if won_contract:
+        diff = game_value * schwarz_mult if is_playing_team else -game_value * schwarz_mult
+    else:
+        diff = -game_value * schwarz_mult if is_playing_team else game_value * schwarz_mult
+    return diff, tricks_party_0, tricks_party_1, playing_party_abs
+
+
+def run_episode(
+    env: MarjapussiEnv,
+    model,
+    device,
+    mc_rollouts: int,
+    stage: int,
+    inference_server,
+    start_trick: int = None,
+    verbose_timing: bool = False,
+    seed: int = None,
+    force_heuristic_bidding: bool = False,
+    force_heuristic_passing: bool = False,
+    pov: int | None = None,
+) -> list[Transition]:
+    """
+    Play one complete game and return training transitions for POV-controlled decisions only.
+    stage 0: heuristic actions for POV (bootstrap data collection)
+    stage 1: model actions for POV
+    Non-POV seats always use heuristic policy to avoid hidden-information leakage.
+    """
+    transitions: list[Transition] = []
+    pending: Transition | None = None
     t_step_total = 0.0
     t_adv_total = 0.0
-    t_inf_total = 0.0
     n_adv_calls = 0
+
     try:
-        obs = env.reset(start_trick=start_trick, seed=seed)
+        episode_pov = pov if pov is not None else (random.randrange(4) if stage >= 1 else 0)
+        obs = env.reset(pov=episode_pov, start_trick=start_trick, seed=seed)
         steps = 0
-        info = {}
+        info: dict = {}
+
         while not env.done and steps < 300:
             steps += 1
             legal = env.legal_actions
@@ -77,174 +137,127 @@ def run_episode(env: MarjapussiEnv, model, device, mc_rollouts: int, stage: int,
                 break
 
             t0_step = time.perf_counter()
+            active_player = int(obs.get("active_player", 0))
+            controls_turn = (active_player == 0)  # relative to POV
 
-            # Compute tensors ONCE per step (reused for inference & storage)
-            t_before = obs_to_tensors(obs)
+            # Transition reward is accumulated over all environment steps until POV acts again.
+            if controls_turn and pending is not None:
+                transitions.append(pending)
+                pending = None
 
-            active_player = obs.get("active_player", 0)
+            is_bid = _is_bidding_action(legal)
+            is_pass = _is_passing_action(legal)
+            action_pos = 0
 
-            # Choose action
-            is_bid = bool(legal and legal[0].get("action_token") in (41, 42))
-            is_pass = bool(legal and legal[0].get("action_token") == 43)
-            
-            # ALWAYS query the model for value prediction so GAE mathematically baselines correctly!
-            model_action_pos, val_pred, model_log_prob = inference_server.infer(t_before)
-            
-            if stage == 0 or len(legal) == 1 or (is_bid and force_heuristic_bidding) or (is_pass and force_heuristic_passing):
-                action_pos = env.get_heuristic_action() if (stage == 0 or is_bid or is_pass) else 0
-                # Use a neutral log_prob for heuristic actions to cleanly guide behavioral cloning
-                log_prob = -1.0 
+            if controls_turn:
+                t_before = obs_to_tensors(obs)
+                model_action_pos, val_pred, model_log_prob = inference_server.infer(t_before)
+                force_heuristic_turn = (
+                    stage == 0
+                    or len(legal) == 1
+                    or (is_bid and force_heuristic_bidding)
+                    or (is_pass and force_heuristic_passing)
+                )
+
+                if force_heuristic_turn:
+                    action_pos = env.get_heuristic_action() if len(legal) > 1 else 0
+                    log_prob = -1.0
+                else:
+                    action_pos = min(model_action_pos, len(legal) - 1)
+                    log_prob = model_log_prob
+
+                advantage = 0.0
+                if len(legal) > 1 and mc_rollouts > 0:
+                    trick_no = obs.get("trick_number", 1)
+                    if start_trick == -1:
+                        is_target = is_bid
+                    elif start_trick == 0:
+                        is_target = is_pass
+                    else:
+                        is_target = (trick_no == start_trick) and not is_bid and not is_pass
+
+                    if is_target:
+                        t0_adv = time.perf_counter()
+                        try:
+                            advs = env.get_advantages(policy="heuristic", num_rollouts=mc_rollouts)
+                            if advs and action_pos < len(advs):
+                                advantage = advs[action_pos]
+                        except Exception:
+                            pass
+                        t_adv_total += time.perf_counter() - t0_adv
+                        n_adv_calls += 1
+
+                pending = Transition(
+                    obs=t_before,
+                    action_idx=action_pos,
+                    advantage=advantage,
+                    pts_my=0.0,
+                    pts_opp=0.0,
+                    value=val_pred,
+                    active_player=active_player,
+                    log_prob=log_prob,
+                    imm_r=0.0,
+                )
             else:
-                action_pos = min(model_action_pos, len(legal) - 1)
-                log_prob = model_log_prob
+                action_pos = env.get_heuristic_action() if len(legal) > 1 else 0
 
-            # Targeted Curriculum Branching: only branch at the specific learning trick
-            # Targeted Curriculum Branching: only branch at the specific learning trick
-            advantage = 0.0
-            trick_no = obs.get('trick_number', 1)
-            
-            # Infer the true phase based on action tokens because trick_number defaults to 1 early on.
-            # Bidding actions are typically ACT_BID (41) or ACT_PASS_STOP (42).
-            # Passing actions are typically ACT_PASS_CARDS (43).
-            is_bidding = False
-            is_passing = False
-            if len(legal) > 0:
-                first_tok = legal[0].get("action_token", 0)
-                if first_tok in [41, 42]:
-                    is_bidding = True
-                elif first_tok == 43:
-                    is_passing = True
-            
-            if start_trick == -1:
-                is_target = is_bidding
-            elif start_trick == 0:
-                is_target = is_passing
-            else:
-                is_target = (trick_no == start_trick) and not is_bidding and not is_passing
-
-            if len(legal) > 1 and mc_rollouts > 0:
-                # No stochastic branching — it's causing unpredictable overhead
-                if is_target:
-                    t0_adv = time.perf_counter()
-                    try:
-                        advs = env.get_advantages(policy="heuristic", num_rollouts=mc_rollouts)
-                        if advs and action_pos < len(advs):
-                            # The Rust environment calculates advantages from the physical perspective of POV (Seat 0).
-                            # If the active player making this decision is on the opposing team, an action
-                            # that is "good" for POV (+advantage) is actively BAD for the opponent! We MUST invert it.
-                            raw_adv = advs[action_pos]
-                            advantage = raw_adv if (active_player % 2 == env.pov % 2) else -raw_adv
-                    except Exception:
-                        pass
-                    t_adv_total += time.perf_counter() - t0_adv
-                    n_adv_calls += 1
-
-            prev_my_pts = obs.get("points_my_team", 0)
-            prev_opp_pts = obs.get("points_opp_team", 0)
-
-            obs, done, info = env.step(legal[action_pos]["action_list_idx"])
+            prev_my_pts = float(obs.get("points_my_team", 0))
+            prev_opp_pts = float(obs.get("points_opp_team", 0))
+            obs, _, info = env.step(legal[action_pos]["action_list_idx"])
             t_step_total += time.perf_counter() - t0_step
 
-            # Calculate immediate tick reward based on trick point diffs
-            my_diff = obs.get("points_my_team", 0) - prev_my_pts
-            opp_diff = obs.get("points_opp_team", 0) - prev_opp_pts
-            imm_r = (my_diff - opp_diff) / 420.0
-            if active_player % 2 != env.pov % 2:
-                imm_r = -imm_r
+            # Reward from POV perspective; accumulate until next POV decision.
+            my_diff = float(obs.get("points_my_team", 0)) - prev_my_pts
+            opp_diff = float(obs.get("points_opp_team", 0)) - prev_opp_pts
+            step_reward = (my_diff - opp_diff) / 420.0
+            if pending is not None:
+                pending = pending._replace(imm_r=pending.imm_r + step_reward)
 
-            transitions.append(Transition(
-                obs=t_before,
-                action_idx=action_pos,
-                advantage=advantage,
-                pts_my=0.0,
-                pts_opp=0.0,
-                value=val_pred,
-                active_player=active_player,
-                log_prob=log_prob,
-                imm_r=imm_r,
-            ))
+        if pending is not None:
+            transitions.append(pending)
+
+        if (not info or "team_points" not in info) and not env.done:
+            info = env.run_to_end("heuristic")
 
         if verbose_timing and steps > 0:
             avg_step = 1000 * t_step_total / steps
-            avg_inf  = 1000 * t_inf_total / steps
-            # Percentage of time spent in Rust branching if it occurred
-            branch_pct = (t_adv_total / t_step_total * 100.0) if t_step_total > 0 else 0
-            
+            branch_pct = (t_adv_total / t_step_total * 100.0) if t_step_total > 0 else 0.0
             Log.sim(
                 f"Episode stats: {steps} steps | "
-                f"StepAvg: {avg_step:.1f}ms (Inf: {avg_inf:.1f}ms) | "
+                f"StepAvg: {avg_step:.1f}ms | "
                 f"AdvCalls: {n_adv_calls} | "
                 f"BranchingWork: {branch_pct:.1f}%"
             )
 
-        # Fill in final outcome for all transitions
+        pov_party = env.pov % 2
         if info and "team_points" in info:
-            pts_team0 = info["team_points"][0]
-            pts_team1 = info["team_points"][1]
-            pts0 = pts_team0 / 420.0
-            pts1 = pts_team1 / 420.0
-            
-            playing_party = info.get("playing_party")
-            game_value = info.get("game_value", 0) / 420.0 # Normalize game value to [-0.5, 0.5] approximate range (e.g. 140/420 = 0.33)
-            schwarz = info.get("schwarz", False)
-            won_contract = info.get("won", False)
-            
-            # 1. Objective Alignment: RL Reward should be based on Game Value Swing, not raw tricks.
-            if playing_party is not None:
-                # Base contract points
-                reward_magnitude = game_value
-                if schwarz:
-                    reward_magnitude *= 2.0 # Schwarz doubles game value swing
-
-                # If the attackers won the contract, they get +reward, defenders get -reward.
-                # If the attackers failed their contract, they get -reward, defenders get +reward.
-                if won_contract:
-                    diff0 = reward_magnitude if playing_party == 0 else -reward_magnitude
-                else:
-                    diff0 = -reward_magnitude if playing_party == 0 else reward_magnitude
-            else:
-                # Passgame (no one played). Winner is whoever has more trick points.
-                base_passgame_reward = 115.0 / 420.0
-                if pts_team0 > pts_team1:
-                    diff0 = base_passgame_reward
-                elif pts_team1 > pts_team0:
-                    diff0 = -base_passgame_reward
-                else:
-                    diff0 = 0.0
-            
-            tricks_party_0 = sum(1 for t in info.get("tricks", []) if t["winner"] % 2 == 0)
-            tricks_party_1 = sum(1 for t in info.get("tricks", []) if t["winner"] % 2 == 1)
+            pts_my, pts_opp = _pov_team_points(info, pov_party)
+            pts_my_norm = pts_my / 420.0
+            pts_opp_norm = pts_opp / 420.0
+            terminal_diff, tricks_party_0, tricks_party_1, playing_party = _contract_reward_from_pov(info, pov_party)
         else:
-            pts0 = pts1 = 0.5
-            diff0 = 0.0
+            pts_my_norm = 0.5
+            pts_opp_norm = 0.5
+            terminal_diff = 0.0
+            tricks_party_0 = 0
+            tricks_party_1 = 0
             playing_party = None
-            tricks_party_0 = tricks_party_1 = 0
 
-        # Subtract all the strictly intermediate rewards already distributed
-        sum_imm_r_0 = sum(t.imm_r if t.active_player % 2 == 0 else -t.imm_r for t in transitions)
-        remainder_0 = diff0 - sum_imm_r_0
-        final_rewards = {0: remainder_0, 1: -remainder_0}
-        
-        # GAE calculation (gamma=0.99, lambda=0.95)
+        if not transitions:
+            return []
+
+        sum_imm = sum(t.imm_r for t in transitions)
+        remainder = terminal_diff - sum_imm
+
         gamma, lam = 0.99, 0.95
         gae_advs = [0.0] * len(transitions)
-        returns  = [0.0] * len(transitions)
+        returns = [0.0] * len(transitions)
         last_gae = 0.0
-        
+
         for t in reversed(range(len(transitions))):
-            curr_team = transitions[t].active_player % 2
             v_t = transitions[t].value
-            
-            # Action's immediate reward points
-            r_t = transitions[t].imm_r
-            
-            if t == len(transitions) - 1:
-                next_v = 0.0
-                r_t += final_rewards[curr_team] # give remaining unaccounted game points to last action
-            else:
-                next_team = transitions[t+1].active_player % 2
-                next_v = transitions[t+1].value if next_team == curr_team else -transitions[t+1].value
-                
+            r_t = transitions[t].imm_r + (remainder if t == len(transitions) - 1 else 0.0)
+            next_v = transitions[t + 1].value if t < len(transitions) - 1 else 0.0
             delta = r_t + gamma * next_v - v_t
             last_gae = delta + gamma * lam * last_gae
             gae_advs[t] = last_gae
@@ -253,28 +266,34 @@ def run_episode(env: MarjapussiEnv, model, device, mc_rollouts: int, stage: int,
         out_transitions = []
         for idx, t in enumerate(transitions):
             is_bid = bool(t.obs["action_feats"][0, t.action_idx, 1] > 0.5)
-            curr_team = t.active_player % 2
             adv = t.advantage if abs(t.advantage) > 0.01 else gae_advs[idx]
 
-            # Defender Bidding Mask: If the model didn't win the bid (defending party), 
-            # only give it a bidding training signal if it played the attackers to 0 tricks.
-            if is_bid and playing_party is not None and curr_team != playing_party:
+            # Defender bidding mask:
+            # only keep defender bid training signal when attackers are held to 0 tricks.
+            if is_bid and playing_party is not None and pov_party != playing_party:
                 attacker_tricks = tricks_party_0 if playing_party == 0 else tricks_party_1
                 if attacker_tricks > 0:
                     adv = 0.0
 
             processed_obs = {
-                k: (v.detach().cpu() if isinstance(v, torch.Tensor) 
-                    else {sk: sv.detach().cpu() for sk, sv in v.items()} if isinstance(v, dict) 
-                    else v) 
+                k: (
+                    v.detach().cpu() if isinstance(v, torch.Tensor)
+                    else {sk: sv.detach().cpu() for sk, sv in v.items()} if isinstance(v, dict)
+                    else v
+                )
                 for k, v in t.obs.items()
             }
-            
+
             out_transitions.append(Transition(
-                processed_obs, t.action_idx, adv,
-                pts0 if t.active_player % 2 == 0 else pts1,
-                pts1 if t.active_player % 2 == 0 else pts0,
-                returns[idx], t.active_player, t.log_prob, t.imm_r
+                processed_obs,
+                t.action_idx,
+                adv,
+                pts_my_norm,
+                pts_opp_norm,
+                returns[idx],
+                t.active_player,
+                t.log_prob,
+                t.imm_r,
             ))
 
         return out_transitions
@@ -342,7 +361,16 @@ def eval_deterministic(model, device, n=100) -> dict:
     
     try:
         for seed in range(1, n + 1):
-            eps = run_episode(env, model, device, mc_rollouts=0, stage=1, inference_server=server, seed=seed)
+            eps = run_episode(
+                env,
+                model,
+                device,
+                mc_rollouts=0,
+                stage=1,
+                inference_server=server,
+                seed=seed,
+                pov=(seed - 1) % 4,
+            )
             if eps:
                 last_t = eps[-1]
                 diff = (last_t.pts_my - last_t.pts_opp) * 420.0
@@ -471,7 +499,7 @@ def train_online(
         gen_time = time.time() - t0
 
         if n_trans == 0:
-            Log.warn(f"[Round {rnd+1}] No transitions collected — skipping")
+            Log.warn(f"[Round {rnd+1}] No transitions collected - skipping")
             continue
 
         # ── Train on collected batch ─────────────────────────────────────────
@@ -505,11 +533,11 @@ def train_online(
         policy_label = "heuristic" if stage == 0 else f"model-v{rnd+1}"
         rate = games_per_round / gen_time
         Log.success(f"Round {rnd+1:3d} Summary:")
-        print(f"  » Policy:   {policy_label}")
-        print(f"  » Games:    {games_per_round} ({rate:.1f} games/s)")
-        print(f"  » Samples:  {n_trans} transitions")
-        print(f"  » Losses:   Total: {avg_loss.get('total',0):.4f} | Pol: {avg_loss.get('policy',0):.4f} | Val: {avg_loss.get('value',0):.4f} | Ent: {avg_loss.get('entropy',0):.4f} | Pts: {avg_loss.get('pts',0):.4f}")
-        print(f"  » Time:     Sim: {gen_time:.1f}s | Opt: {train_time:.1f}s")
+        print(f"  - Policy:   {policy_label}")
+        print(f"  - Games:    {games_per_round} ({rate:.1f} games/s)")
+        print(f"  - Samples:  {n_trans} transitions")
+        print(f"  - Losses:   Total: {avg_loss.get('total',0):.4f} | Pol: {avg_loss.get('policy',0):.4f} | Val: {avg_loss.get('value',0):.4f} | Ent: {avg_loss.get('entropy',0):.4f} | Pts: {avg_loss.get('pts',0):.4f}")
+        print(f"  - Time:     Sim: {gen_time:.1f}s | Opt: {train_time:.1f}s")
 
         log_entry = {"round": rnd+1, "stage": stage, "n_games": games_per_round,
                      "n_transitions": n_trans, "losses": avg_loss,
@@ -519,13 +547,13 @@ def train_online(
         if (rnd + 1) % eval_every == 0 and stage == 1:
             eval_metrics = eval_deterministic(model, device, n=100)
             avg_diff = eval_metrics["avg_diff"]
-            print(f"           → Point diff (100 games): {avg_diff:+.1f}")
+            print(f"           -> Point diff (100 games): {avg_diff:+.1f}")
             log_entry["avg_diff"] = avg_diff
             torch.save(model.state_dict(), CKPT_DIR / f"online_round_{rnd+1}.pt")
             if avg_diff > best_diff:
                 best_diff = avg_diff
                 torch.save(model.state_dict(), CKPT_DIR / "best.pt")
-                print(f"           → New best: {best_diff:+.1f}")
+                print(f"           -> New best: {best_diff:+.1f}")
                 
         # 50k games checkpoint (250 rounds * 200 games/round)
         if (rnd + 1) % 250 == 0:
