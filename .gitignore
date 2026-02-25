@@ -22,6 +22,8 @@ ml/checkpoints/
 ml/runs/
 *.pt
 *.onnx
+*.safetensors
+*.bin
 
 # Local benchmark/debug dumps
 *.ndjson
