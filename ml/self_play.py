@@ -55,7 +55,7 @@ def model_policy(model: torch.nn.Module, obs: dict, device: str = 'cpu') -> tupl
                    {kk: vv.to(device) for kk, vv in v.items()})
                for k, v in tensors.items()}
     with torch.no_grad():
-        logits, _, _ = model(tensors)  # [1, A]
+        logits, _, _, _ = model(tensors)  # [1, A]
     logits = logits[0]  # [A]
     ent = policy_entropy(logits)
     # Sample from policy
@@ -105,20 +105,17 @@ def run_episode(
             # Capture tensors before stepping
             tensors = obs_to_tensors(obs)
 
-            # Counterfactual evaluation at uncertain decision points
-            should_cf = (
-                entropy > ENTROPY_THRESHOLD
-                and len(legal) > 1
-                and obs.get('trick_number', 1) >= phase_start_trick
-            )
+            # Targeted Curriculum Branching: only branch at the specific trick we are learning
+            trick_no = obs.get('trick_number', 1)
+            is_target = (trick_no == phase_start_trick)
+            is_stochastic = (random.random() < 0.05)
+            
+            should_cf = (len(legal) > 1 and (is_target or is_stochastic))
 
             if should_cf:
-                branches = env.try_all_actions(policy=cf_policy)
-                if branches:
-                    # Compute advantages: outcome differential from branch outcomes
-                    advantages = compute_advantages(branches, pov_seat=0)
-                    # The chosen action's advantage
-                    chosen_advantage = advantages.get(action_pos, 0.0)
+                advs = env.get_advantages(policy=cf_policy, num_rollouts=4)
+                if advs and action_pos < len(advs):
+                    chosen_advantage = advs[action_pos]
                     episode.transitions.append(Transition(
                         obs_tensors=tensors,
                         action_idx=action_pos,
@@ -135,11 +132,11 @@ def run_episode(
 
     # Fill in point targets for any captured transitions
     if episode.outcome:
-        pts_my = episode.outcome.get('tricks', [])
-        total_pts = sum(t['points'] for t in pts_my if t['winner'] % 2 == 0)
+        my_pts = episode.outcome.get('team_points', [0, 0])[0]
+        opp_pts = episode.outcome.get('team_points', [0, 0])[1]
         for t in episode.transitions:
-            t.points_my_team_target = total_pts / 120.0
-            t.points_opp_team_target = (120 - total_pts) / 120.0
+            t.points_my_team_target = my_pts / 420.0
+            t.points_opp_team_target = opp_pts / 420.0
 
     return episode
 
@@ -153,9 +150,18 @@ def compute_advantages(branches: list[dict], pov_seat: int = 0) -> dict[int, flo
     scores = {}
     for branch in branches:
         idx = branch['action_idx']
-        tricks = branch['outcome'].get('tricks', [])
-        my_pts = sum(t['points'] for t in tricks if t['winner'] % 2 == pov_seat % 2)
-        scores[idx] = float(my_pts)
+        # Handle both single 'outcome' and plural 'outcomes'
+        outcomes = branch.get('outcomes', [branch.get('outcome')])
+        
+        vals = []
+        for outcome in outcomes:
+            if not outcome: continue
+            tricks = outcome.get('tricks', [])
+            my_pts = sum(t['points'] for t in tricks if t['winner'] % 2 == pov_seat % 2)
+            vals.append(float(my_pts))
+        
+        if vals:
+            scores[idx] = sum(vals) / len(vals)
 
     if not scores:
         return {}

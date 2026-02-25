@@ -8,6 +8,8 @@ Architecture:
 """
 
 import math
+import warnings
+warnings.filterwarnings("ignore", ".*enable_nested_tensor is True.*")
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,7 +22,7 @@ SUIT_BASE = 60       # suit tokens 60..63
 NUM_SUITS = 4
 NUM_ROLES = 5        # VH/MH/LH/RH/None
 NUM_TRUMP_POSS = 3   # Own/Yours/Ours
-MAX_SEQ_LEN = 256
+MAX_SEQ_LEN = 1024
 
 
 # ── Card feature builder ───────────────────────────────────────────────────────
@@ -108,7 +110,7 @@ class StreamA(nn.Module):
         last_bonus:     [B, 1]      — last trick bonus live bit
     """
 
-    def __init__(self, card_emb_dim=32, state_dim=128):
+    def __init__(self, card_emb_dim=128, state_dim=512):
         super().__init__()
         self.card_emb = CardEmbedding(card_emb_dim)
 
@@ -119,12 +121,12 @@ class StreamA(nn.Module):
             nn.ReLU(),
         )
 
-        # A1: hand (32) + A2: 3×opp (96) + A3: trick (32) + A3: trick_pos (4)
+        # A1: hand (128) + A2: 3×opp (384) + A3: trick (128) + A3: trick_pos (4)
         # + A4: trump (5) + trump_called (4) + trump_poss (3) + role (5)
         #      + trick_num (1) + pts_mine (1) + pts_opp (1) + last_bonus (1)
-        #      + cards_rem (4)
-        # = 32 + 96 + 32 + 4 + 5 + 4 + 3 + 5 + 1 + 1 + 1 + 1 + 4 = 189
-        raw_dim = 32 + 96 + 32 + 4 + 5 + 4 + 3 + 5 + 1 + 1 + 1 + 1 + 4
+        #      + cards_rem (4) + active_parity (2)
+        # = 128 + 384 + 128 + 4 + 5 + 4 + 3 + 5 + 1 + 1 + 1 + 1 + 4 + 2 = 671
+        raw_dim = card_emb_dim + (3 * card_emb_dim) + card_emb_dim + 4 + 5 + 4 + 3 + 5 + 1 + 1 + 1 + 1 + 4 + 2
         self.state_enc = nn.Sequential(
             nn.Linear(raw_dim, state_dim),
             nn.ReLU(),
@@ -166,11 +168,12 @@ class StreamA(nn.Module):
         pts_opp = obs['pts_opp'].to(device)              # [B, 1]
         last_bonus = obs['last_bonus'].to(device)        # [B, 1]
         cards_rem = obs['cards_rem'].to(device)          # [B, 4]
+        active_parity = obs['active_parity'].to(device)  # [B, 2]
 
         raw = torch.cat([
             hand_emb, opp_cat, trick_emb,
             trick_pos, trump_oh, trump_called, trump_poss, role_oh,
-            trick_num, pts_mine, pts_opp, last_bonus, cards_rem,
+            trick_num, pts_mine, pts_opp, last_bonus, cards_rem, active_parity
         ], dim=-1)
 
         return self.state_enc(raw)   # [B, 128]
@@ -180,11 +183,11 @@ class StreamA(nn.Module):
 
 class StreamB(nn.Module):
     """
-    Small transformer encoder over event token ids → 64-dim history_vec.
+    Medium transformer encoder over event token ids → 256-dim history_vec.
     """
 
-    def __init__(self, vocab_size=VOCAB_SIZE, emb_dim=64, n_heads=4,
-                 n_layers=4, ff_dim=128, max_len=MAX_SEQ_LEN):
+    def __init__(self, vocab_size=VOCAB_SIZE, emb_dim=256, n_heads=8,
+                 n_layers=12, ff_dim=1024, max_len=MAX_SEQ_LEN):
         super().__init__()
         self.emb = nn.Embedding(vocab_size, emb_dim, padding_idx=0)
         self.pos_emb = nn.Embedding(max_len, emb_dim)
@@ -221,14 +224,18 @@ class ActionScorer(nn.Module):
     → scores:     [B, max_actions]
     """
 
-    def __init__(self, action_feat_dim=51, state_dim=128, hist_dim=64, action_emb_dim=32):
+    def __init__(self, action_feat_dim=51, state_dim=512, hist_dim=256, action_emb_dim=128):
         super().__init__()
         self.action_enc = nn.Sequential(
             nn.Linear(action_feat_dim, action_emb_dim),
             nn.ReLU(),
         )
         fused_dim = action_emb_dim + state_dim + hist_dim
-        self.scorer = nn.Linear(fused_dim, 1)
+        self.scorer = nn.Sequential(
+            nn.Linear(fused_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 1)
+        )
 
     def forward(self, action_feats: torch.Tensor,
                 state_vec: torch.Tensor,
@@ -242,12 +249,12 @@ class ActionScorer(nn.Module):
         → logits:     [B, A]  (-inf for padding)
         """
         B, A, _ = action_feats.shape
-        action_emb = self.action_enc(action_feats)   # [B, A, 32]
-        sv = state_vec.unsqueeze(1).expand(-1, A, -1)  # [B, A, 128]
-        hv = history_vec.unsqueeze(1).expand(-1, A, -1)  # [B, A, 64]
-        fused = torch.cat([action_emb, sv, hv], dim=-1)   # [B, A, 224]
+        action_emb = self.action_enc(action_feats)   # [B, A, 128]
+        sv = state_vec.unsqueeze(1).expand(-1, A, -1)  # [B, A, 512]
+        hv = history_vec.unsqueeze(1).expand(-1, A, -1)  # [B, A, 256]
+        fused = torch.cat([action_emb, sv, hv], dim=-1)   # [B, A, 896]
         logits = self.scorer(fused).squeeze(-1)            # [B, A]
-        logits = logits.masked_fill(action_mask, float('-inf'))
+        logits = logits.masked_fill(action_mask, -1e4)
         return logits
 
 
@@ -256,19 +263,30 @@ class ActionScorer(nn.Module):
 class AuxHeads(nn.Module):
     """Auxiliary training heads sharing the fused context."""
 
-    def __init__(self, state_dim=128, hist_dim=64):
+    def __init__(self, state_dim=512, hist_dim=256):
         super().__init__()
         fused = state_dim + hist_dim
         # Predict which cards each opponent holds (3 × 36 binary)
         self.card_pred = nn.Linear(fused, 3 * NUM_CARDS)
         # Predict final points (2 scalars: my team, opp team, both in [0,1])
-        self.points_pred = nn.Linear(fused, 2)
+        self.points_pred = nn.Sequential(
+            nn.Linear(fused, 128),
+            nn.ReLU(),
+            nn.Linear(128, 2)
+        )
+        # Value head for PPO (State Value V(s))
+        self.value_pred = nn.Sequential(
+            nn.Linear(fused, 128),
+            nn.ReLU(),
+            nn.Linear(128, 1)
+        )
 
     def forward(self, state_vec: torch.Tensor, history_vec: torch.Tensor):
         fused = torch.cat([state_vec, history_vec], dim=-1)  # [B, 192]
         card_logits = self.card_pred(fused).view(-1, 3, NUM_CARDS)   # [B, 3, 36]
         points = torch.sigmoid(self.points_pred(fused))               # [B, 2]
-        return card_logits, points
+        value = self.value_pred(fused).squeeze(-1)                    # [B]
+        return card_logits, points, value
 
 
 # ── Full Model ─────────────────────────────────────────────────────────────────
@@ -276,10 +294,10 @@ class AuxHeads(nn.Module):
 class MarjapussiNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.stream_a = StreamA(card_emb_dim=32, state_dim=128)
-        self.stream_b = StreamB()
-        self.action_scorer = ActionScorer()
-        self.aux_heads = AuxHeads()
+        self.stream_a = StreamA(card_emb_dim=128, state_dim=512)
+        self.stream_b = StreamB(emb_dim=256, n_heads=8, n_layers=12, ff_dim=1024)
+        self.action_scorer = ActionScorer(state_dim=512, hist_dim=256, action_emb_dim=128)
+        self.aux_heads = AuxHeads(state_dim=512, hist_dim=256)
 
     def forward(self, batch: dict):
         """
@@ -294,6 +312,7 @@ class MarjapussiNet(nn.Module):
             policy_logits:  [B, A]
             card_logits:    [B, 3, 36]
             point_preds:    [B, 2]
+            value_pred:     [B]
         """
         state_vec = self.stream_a(batch['obs_a'])                 # [B, 128]
         history_vec = self.stream_b(batch['token_ids'],
@@ -301,8 +320,8 @@ class MarjapussiNet(nn.Module):
         logits = self.action_scorer(
             batch['action_feats'], state_vec, history_vec,
             batch['action_mask'])                                  # [B, A]
-        card_logits, point_preds = self.aux_heads(state_vec, history_vec)
-        return logits, card_logits, point_preds
+        card_logits, point_preds, value_pred = self.aux_heads(state_vec, history_vec)
+        return logits, card_logits, point_preds, value_pred
 
     def param_count(self) -> int:
         return sum(p.numel() for p in self.parameters())
@@ -318,32 +337,34 @@ if __name__ == '__main__':
 
     # Fake batch
     obs_a = {
-        'card_feats': torch.zeros(B, 36, 16),
-        'my_hand_mask': torch.zeros(B, 36),
-        'poss_masks': torch.zeros(B, 3, 36),
-        'conf_masks': torch.zeros(B, 3, 36),
-        'trick_mask': torch.zeros(B, 36),
-        'cards_rem': torch.zeros(B, 4),
-        'trump_oh': torch.zeros(B, 5),
-        'trump_called': torch.zeros(B, 4),
-        'trump_poss': torch.zeros(B, 3),
-        'role_oh': torch.zeros(B, 5),
-        'trick_pos_oh': torch.zeros(B, 4),
-        'trick_num': torch.zeros(B, 1),
-        'pts_mine': torch.zeros(B, 1),
-        'pts_opp': torch.zeros(B, 1),
-        'last_bonus': torch.zeros(B, 1),
+        'card_feats': torch.zeros((B, 36, 16)),
+        'my_hand_mask': torch.zeros((B, 36)),
+        'poss_masks': torch.zeros((B, 3, 36)),
+        'conf_masks': torch.zeros((B, 3, 36)),
+        'trick_mask': torch.zeros((B, 36)),
+        'cards_rem': torch.zeros((B, 4)),
+        'trump_oh': torch.zeros((B, 5)),
+        'trump_called': torch.zeros((B, 4)),
+        'trump_poss': torch.zeros((B, 3)),
+        'role_oh': torch.zeros((B, 5)),
+        'trick_pos_oh': torch.zeros((B, 4)),
+        'trick_num': torch.zeros((B, 1)),
+        'pts_mine': torch.zeros((B, 1)),
+        'pts_opp': torch.zeros((B, 1)),
+        'last_bonus': torch.zeros((B, 1)),
+        'active_parity': torch.zeros((B, 2)),
     }
     batch = {
         'obs_a': obs_a,
-        'token_ids': torch.zeros(B, L, dtype=torch.long),
-        'token_mask': torch.zeros(B, L, dtype=torch.bool),
-        'action_feats': torch.zeros(B, A, 51),
-        'action_mask': torch.zeros(B, A, dtype=torch.bool),
+        'token_ids': torch.zeros((B, L), dtype=torch.long),
+        'token_mask': torch.zeros((B, L), dtype=torch.bool),
+        'action_feats': torch.zeros((B, A, 51)),
+        'action_mask': torch.zeros((B, A), dtype=torch.bool),
     }
-    logits, card_logits, point_preds = model(batch)
+    logits, card_logits, point_preds, value_pred = model(batch)
     assert logits.shape == (B, A), f"Unexpected logits shape: {logits.shape}"
     assert card_logits.shape == (B, 3, 36)
     assert point_preds.shape == (B, 2)
+    assert value_pred.shape == (B,)
     print("Smoke test passed. Output shapes correct.")
     sys.exit(0)

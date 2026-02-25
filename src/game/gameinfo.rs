@@ -104,6 +104,7 @@ pub struct GameFinishedInfo {
     /// PlaceAtTable for who got the trick
     pub tricks: Vec<FinishedTrick>,
     pub all_events: Vec<GameEvent>,
+    pub team_points: [i32; 2],
 }
 
 impl From<Game> for GameFinishedInfo {
@@ -175,6 +176,11 @@ impl From<Game> for GameFinishedInfo {
             won = Some(points_party >= game.state.value);
         }
 
+        let team_points = [
+            (players_points[0] + players_points[2]).0,
+            (players_points[1] + players_points[3]).0,
+        ];
+
         GameFinishedInfo {
             info: game.info.clone(),
             game_value: game.state.value,
@@ -187,6 +193,7 @@ impl From<Game> for GameFinishedInfo {
             bidding_history: game.state.bidding_history,
             tricks: game.state.all_tricks,
             all_events: game.all_events,
+            team_points,
         }
     }
 }

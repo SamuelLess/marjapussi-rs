@@ -53,6 +53,7 @@ pub fn parse_cards(cards: Vec<String>) -> Vec<Card> {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct LegacyGameFormat {
     /// The id of the game found in '_id.$oid'
     #[serde(rename = "_id")]

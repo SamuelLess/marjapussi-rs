@@ -64,12 +64,13 @@ fn make_policy(p: &str) -> PolicyFn { match p { "random" => random_policy(), _ =
 /// Run n_rollouts per legal action, return normalised advantages (mean=0, std=1).
 fn mc_advantages(game: &Game, policy: &PolicyFn, n: u32, pov_parity: u8) -> Vec<f32> {
     let legal = game.legal_actions.clone();
+    let mut cache = std::collections::HashMap::new();
     let scores: Vec<f32> = legal.iter().map(|action| {
         let sum: f32 = (0..n).map(|_| {
             match game.apply_action(action.clone()) {
                 Err(_) => 0.5,
                 Ok(branch) => {
-                    let (_, info) = run_to_end(branch, policy);
+                    let (_, info) = run_to_end(branch, policy, &mut cache);
                     info.tricks.iter()
                         .filter(|t| t.winner.0 % 2 == pov_parity)
                         .map(|t| t.points.0 as f32)
@@ -103,14 +104,15 @@ fn run_game_collect(policy: &PolicyFn, from_trick: usize, mc_rollouts: u32)
         }
     }
 
-    let mut decision_points: Vec<(ObservationJson, usize, Vec<f32>)> = vec![];
+    let mut decision_points: Vec<(ObservationJson, usize, Vec<f32>, u8)> = vec![];
 
+    let mut cache = std::collections::HashMap::new();
     let mut steps = 0;
     while game.state.phase != GamePhase::Ended && steps < 300 {
         steps += 1;
         let legal = game.legal_actions.clone();
         if legal.is_empty() { break; }
-        let action_idx = policy(&legal).min(legal.len() - 1);
+        let action_idx = policy(&game, &mut cache).min(legal.len() - 1);
         let trick_no = game.state.all_tricks.len() + 1;
 
         if trick_no >= from_trick {
@@ -123,7 +125,7 @@ fn run_game_collect(policy: &PolicyFn, from_trick: usize, mc_rollouts: u32)
             } else {
                 vec![]
             };
-            decision_points.push((obs_json, action_idx, advs));
+            decision_points.push((obs_json, action_idx, advs, pov_parity));
         }
 
         match game.apply_action(legal[action_idx].clone()) {
@@ -135,11 +137,17 @@ fn run_game_collect(policy: &PolicyFn, from_trick: usize, mc_rollouts: u32)
     if decision_points.is_empty() { return vec![]; }
     let outcome = GameFinishedInfo::from(game);
 
-    decision_points.into_iter().map(|(obs_json, action_idx, advs)| {
-        let my_pts: i32 = outcome.tricks.iter()
-            .filter(|t| t.winner.0 % 2 == 0)
-            .map(|t| t.points.0).sum();
-        let opp_pts = 120 - my_pts;
+    decision_points.into_iter().map(|(obs_json, action_idx, advs, pov_parity)| {
+        let team_0_pts = outcome.team_points[0];
+        let team_1_pts = outcome.team_points[1];
+        
+        // Fix Dataset POV Issue: Determine pts mapping based on generator parity.
+        let (my_pts, opp_pts) = if pov_parity == 0 {
+            (team_0_pts, team_1_pts)
+        } else {
+            (team_1_pts, team_0_pts)
+        };
+
         let mut r = serde_json::json!({
             "obs": &obs_json,
             "action_taken": action_idx,

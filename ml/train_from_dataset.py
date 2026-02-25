@@ -182,7 +182,7 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
             pts_tgt = batch_data["pts_target"].to(device, non_blocking=True)
 
             with autocast(enabled=use_amp):
-                logits, _, pts_pred = model({"obs_a": obs_a, "token_ids": tok,
+                logits, _, pts_pred, _ = model({"obs_a": obs_a, "token_ids": tok,
                     "token_mask": tok_mask, "action_feats": af, "action_mask": am})
 
                 # Behavior cloning (cross-entropy) weighted by advantage

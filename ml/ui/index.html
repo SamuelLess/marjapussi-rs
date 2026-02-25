@@ -3,773 +3,123 @@
 
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Marjapussi KI</title>
-  <style>
-    *,
-    *::before,
-    *::after {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0
-    }
-
-    :root {
-      --bg: #0d1117;
-      --bg2: #161b22;
-      --bg3: #1c2128;
-      --bd: #30363d;
-      --tx: #e6edf3;
-      --dim: #8b949e;
-      --blue: #58a6ff;
-      --grn: #3fb950;
-      --warn: #d29922;
-      --red: #f85149;
-      --cw: 60px;
-      --ch: 88px
-    }
-
-    html,
-    body {
-      height: 100%;
-      background: var(--bg);
-      color: var(--tx);
-      font: 14px/1.4 'Segoe UI', system-ui, sans-serif;
-      overflow: hidden
-    }
-
-    #app {
-      display: grid;
-      grid-template-rows: 50px 1fr;
-      height: 100vh
-    }
-
-    /* header */
-    #hdr {
-      background: var(--bg2);
-      border-bottom: 1px solid var(--bd);
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 0 16px
-    }
-
-    #logo {
-      font-size: 17px;
-      font-weight: 700;
-      color: var(--blue);
-      margin-right: 4px
-    }
-
-    .btn {
-      border: none;
-      border-radius: 6px;
-      padding: 5px 12px;
-      font: 600 13px/1 'Segoe UI', sans-serif;
-      cursor: pointer;
-      transition: opacity .15s
-    }
-
-    .btn:hover {
-      opacity: .8
-    }
-
-    .bp {
-      background: var(--blue);
-      color: #0d1117
-    }
-
-    .bs {
-      background: var(--bg3);
-      color: var(--tx);
-      border: 1px solid var(--bd)
-    }
-
-    .ba {
-      background: linear-gradient(90deg, #388bfd, #7c3aed);
-      color: #fff
-    }
-
-    #dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: var(--dim);
-      margin-left: auto
-    }
-
-    #dot.ok {
-      background: var(--grn);
-      box-shadow: 0 0 6px var(--grn)
-    }
-
-    #dot.err {
-      background: var(--red)
-    }
-
-    /* main */
-    #main {
-      display: grid;
-      grid-template-columns: 1fr 270px;
-      min-height: 0
-    }
-
-    #board {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      padding: 10px;
-      min-height: 0
-    }
-
-    #side {
-      border-left: 1px solid var(--bd);
-      overflow-y: auto;
-      display: flex;
-      flex-direction: column
-    }
-
-    /* score */
-    #scores {
-      background: var(--bg2);
-      border: 1px solid var(--bd);
-      border-radius: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 8px 20px;
-      flex-shrink: 0
-    }
-
-    .sc-lbl {
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: .5px;
-      color: var(--dim)
-    }
-
-    .sc-val {
-      font-size: 26px;
-      font-weight: 800;
-      color: var(--blue)
-    }
-
-    #trump-sym {
-      font-size: 28px
-    }
-
-    #trump-lbl {
-      font-size: 11px;
-      color: var(--dim)
-    }
-
-    /* table grid */
-    #tbl {
-      flex: 1;
-      min-height: 0;
-      display: grid;
-      grid-template-areas: ". top . " " left felt right" ". bot .";
-      grid-template-columns: 180px 1fr 180px;
-      grid-template-rows: 110px 1fr 120px;
-      gap: 6px
-    }
-
-    #p2 {
-      grid-area: top;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 4px
-    }
-
-    #p1 {
-      grid-area: left;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 4px
-    }
-
-    #p3 {
-      grid-area: right;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 4px
-    }
-
-    #p0 {
-      grid-area: bot;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: flex-start;
-      gap: 4px
-    }
-
-    #felt {
-      grid-area: felt;
-      background: radial-gradient(ellipse, #1b5e20 0%, #0a3d0a 100%);
-      border-radius: 40px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-direction: column;
-      gap: 8px;
-      box-shadow: inset 0 0 50px rgba(0, 0, 0, .5);
-      min-height: 0
-    }
-
-    /* player labels */
-    .plbl {
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--dim);
-      display: flex;
-      gap: 5px;
-      align-items: center
-    }
-
-    .badge {
-      background: var(--bg3);
-      border: 1px solid var(--bd);
-      border-radius: 99px;
-      padding: 0 8px;
-      font-size: 10px;
-      font-weight: 600
-    }
-
-    .you {
-      border-color: var(--blue);
-      color: var(--blue);
-      background: rgba(88, 166, 255, .1)
-    }
-
-    .tob {
-      font-size: 10px;
-      padding: 2px 7px;
-      border: 1px solid var(--bd);
-      border-radius: 4px;
-      background: transparent;
-      color: var(--dim);
-      cursor: pointer;
-      transition: .15s
-    }
-
-    .tob:hover {
-      border-color: var(--blue);
-      color: var(--blue)
-    }
-
-    .tob.on {
-      background: var(--blue);
-      color: #0d1117;
-      border-color: var(--blue)
-    }
-
-    /* hands */
-    .hand {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 3px;
-      max-width: 100%
-    }
-
-    .handv {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 2px;
-      max-height: 200px;
-      overflow: hidden
-    }
-
-    /* cards */
-    .card {
-      width: var(--cw);
-      height: var(--ch);
-      background: #fff;
-      border-radius: 7px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      padding: 4px;
-      font-family: Georgia, serif;
-      position: relative;
-      flex-shrink: 0;
-      cursor: default;
-      transition: transform .15s, box-shadow .15s;
-      animation: ci .18s ease both
-    }
-
-    @keyframes ci {
-      from {
-        opacity: 0;
-        transform: translateY(5px)
-      }
-
-      to {
-        opacity: 1;
-        transform: none
-      }
-    }
-
-    .card.fd {
-      background: linear-gradient(135deg, #1a237e, #283593)
-    }
-
-    .card.fd::after {
-      content: '';
-      position: absolute;
-      inset: 3px;
-      border-radius: 4px;
-      background: repeating-linear-gradient(45deg, rgba(255, 255, 255, .06) 0, rgba(255, 255, 255, .06) 2px, transparent 2px, transparent 9px)
-    }
-
-    .card.legal {
-      cursor: pointer;
-      box-shadow: 0 0 0 2px var(--blue), 0 4px 16px rgba(88, 166, 255, .4);
-      animation: ci .18s ease both, gl 2s ease-in-out infinite
-    }
-
-    @keyframes gl {
-
-      0%,
-      100% {
-        box-shadow: 0 0 0 2px var(--blue), 0 4px 12px rgba(88, 166, 255, .3)
-      }
-
-      50% {
-        box-shadow: 0 0 0 2px var(--blue), 0 6px 24px rgba(88, 166, 255, .6)
-      }
-    }
-
-    .card.legal:hover {
-      transform: translateY(-10px)
-    }
-
-    .card.trick {
-      box-shadow: 0 0 0 2px var(--warn), 0 4px 10px rgba(210, 153, 34, .4)
-    }
-
-    .cv {
-      font-size: 13px;
-      font-weight: 900;
-      line-height: 1
-    }
-
-    .csm {
-      font-size: 11px;
-      line-height: 1
-    }
-
-    .clg {
-      font-size: 24px;
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%)
-    }
-
-    .cbot {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-      transform: rotate(180deg)
-    }
-
-    .s0 {
-      color: #16a34a
-    }
-
-    .s1 {
-      color: #78350f
-    }
-
-    .s2 {
-      color: #b45309
-    }
-
-    .s3 {
-      color: #dc2626
-    }
-
-    /* trick area */
-    #trick {
-      display: flex;
-      gap: 5px;
-      flex-wrap: wrap;
-      justify-content: center
-    }
-
-    #trick-info {
-      font-size: 11px;
-      color: rgba(255, 255, 255, .6);
-      text-align: center
-    }
-
-    #no-game {
-      color: rgba(255, 255, 255, .5);
-      font-size: 14px;
-      text-align: center
-    }
-
-    /* log */
-    #log {
-      background: var(--bg2);
-      border: 1px solid var(--bd);
-      border-radius: 8px;
-      padding: 8px;
-      max-height: 80px;
-      overflow-y: auto;
-      flex-shrink: 0
-    }
-
-    .le {
-      font-size: 11px;
-      color: var(--dim)
-    }
-
-    /* sidebar */
-    .ss {
-      padding: 12px;
-      border-bottom: 1px solid var(--bd)
-    }
-
-    .st {
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: .5px;
-      color: var(--dim);
-      margin-bottom: 8px
-    }
-
-    .ais {
-      background: var(--bg2);
-      border: 1px solid var(--bd);
-      border-radius: 8px;
-      padding: 10px;
-      margin-bottom: 8px
-    }
-
-    .aih {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 6px
-    }
-
-    .ain {
-      font-size: 12px;
-      font-weight: 700
-    }
-
-    .hb {
-      width: 60px;
-      height: 5px;
-      background: var(--bg3);
-      border-radius: 3px;
-      overflow: hidden
-    }
-
-    .hf {
-      height: 100%;
-      border-radius: 3px;
-      transition: width .3s
-    }
-
-    .hl {
-      background: var(--grn)
-    }
-
-    .hm {
-      background: var(--warn)
-    }
-
-    .hh {
-      background: var(--red)
-    }
-
-    .pr {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      margin-bottom: 2px;
-      font-size: 11px
-    }
-
-    .pl {
-      flex: 1;
-      color: var(--dim);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap
-    }
-
-    .pb {
-      height: 6px;
-      background: linear-gradient(90deg, var(--blue), #7c3aed);
-      border-radius: 3px;
-      transition: width .3s;
-      min-width: 1px
-    }
-
-    .pp {
-      width: 28px;
-      text-align: right;
-      color: var(--blue);
-      font-weight: 700
-    }
-
-    .sr {
-      display: flex;
-      justify-content: space-between;
-      margin-bottom: 5px;
-      font-size: 12px
-    }
-
-    .sr span:last-child {
-      font-weight: 700;
-      color: var(--blue)
-    }
-
-    canvas {
-      display: block;
-      width: 100%;
-      height: 70px;
-      margin-top: 4px
-    }
-
-    ::-webkit-scrollbar {
-      width: 3px
-    }
-
-    ::-webkit-scrollbar-thumb {
-      background: var(--bd);
-      border-radius: 2px
-    }
-  </style>
+  <link rel="stylesheet" href="/ui/style.css?v=3">
 </head>
 
 <body>
-  <div id="app">
-    <div id="hdr">
-      <span id="logo">🃏 Marjapussi KI</span>
-      <button class="btn bp" id="bn">Neues Spiel</button>
-      <button class="btn bs" id="ba">▶ Auto</button>
-      <button class="btn ba" id="bp">Proceed ▶</button>
-      <span id="phase" style="font-size:11px;color:var(--dim)">Phase 1</span>
-      <div id="dot"></div>
-    </div>
-    <div id="main">
-      <div id="board">
-        <div id="scores">
-          <div>
-            <div class="sc-lbl">Spieler-Partei</div>
-            <div class="sc-val" id="spts">0</div>
-          </div>
-          <div style="text-align:center">
-            <div id="trump-sym">—</div>
-            <div id="trump-lbl">Kein Trumpf</div>
-          </div>
-          <div>
-            <div class="sc-lbl">Gegen-Partei</div>
-            <div class="sc-val" id="opts">0</div>
-          </div>
-        </div>
-        <div id="tbl">
-          <div id="p2">
-            <div class="plbl"><span id="nm2" class="badge">P2 Partner</span></div>
-            <div class="hand" id="h2"></div>
-            <button class="tob" data-s="2">Übernehmen</button>
-          </div>
-          <div id="p1">
-            <button class="tob" data-s="1">Übernehmen</button>
-            <div class="handv" id="h1"></div>
-            <div class="plbl"><span class="badge">P1 Links</span></div>
-          </div>
-          <div id="felt">
-            <div id="trick"></div>
-            <div id="trick-info">Stich 1</div>
-            <div id="no-game">▸ Neues Spiel starten</div>
-          </div>
-          <div id="p3">
-            <button class="tob" data-s="3">Übernehmen</button>
-            <div class="handv" id="h3"></div>
-            <div class="plbl"><span class="badge">P3 Rechts</span></div>
-          </div>
-          <div id="p0">
-            <div class="hand" id="h0"></div>
-            <div class="plbl"><span class="badge you">P0 Du ✦</span></div>
-          </div>
-        </div>
-        <div id="log"></div>
-      </div>
-      <div id="side">
-        <div class="ss">
-          <div class="st">KI-Info</div>
-          <div id="ai"></div>
-        </div>
-        <div class="ss">
-          <div class="st">Training</div>
-          <div class="sr"><span>Spiele</span><span id="tg">—</span></div>
-          <div class="sr"><span>Stage</span><span id="tst">—</span></div>
-          <div class="sr"><span>Gewinnrate</span><span id="twr">—</span></div>
-          <div class="sr"><span>Loss</span><span id="tl">—</span></div>
-          <canvas id="lcv" width="240" height="70"></canvas>
-        </div>
-      </div>
+
+  <!-- ── Header ──────────────────────────────────────────────────────────────── -->
+  <div id="header">
+    <div id="logo">🃏 Marjapussi KI</div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <div class="dot" id="dot"></div>
+      <button class="btn bs" id="bn">Neues Spiel</button>
+      <button class="btn bs" id="bp">▶ Weiter</button>
+      <button class="btn bs ba" id="ba">▶ Auto</button>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--dim);cursor:pointer">
+        <input type="checkbox" id="dbg"> Debug
+      </label>
     </div>
   </div>
-  <script>
-    const SS = ['♣', '◆', '◆', '♥'], SC = ['s0', 's1', 's2', 's3'], SL = ['Gras', 'Eichel', 'Schellen', 'Herz'];
-    const VL = ['6', '7', '8', '9', 'U', 'O', 'K', '10', 'A'];
-    const AL = { 40: 'Spiel', 41: 'Biete', 42: 'Passe', 43: 'Gib', 44: 'Trumpf', 45: 'Paar?', 46: 'Halb?', 47: 'Ja-P', 48: 'Nein', 49: 'Ja-H', 50: 'Nein' };
-    const PORT = location.port || 8765;
-    let ws, gs, ainfo = {}, hs = new Set(), auto = false, atm, lh = [];
 
-    function connect() {
-      ws = new WebSocket(`ws://${location.hostname}:${PORT}/ws`);
-      dot(0);
-      ws.onopen = () => { dot(1); lg('Verbunden.') };
-      ws.onmessage = e => { const m = JSON.parse(e.data); if (m.type === 'game_state') { gs = m.data; ainfo = m.ai_info || {}; render() } else if (m.type === 'train_stats') tstat(m.data); else if (m.type === 'error') lg('ERR: ' + m.message) };
-      ws.onclose = () => { dot(2); lg('Getrennt…'); setTimeout(connect, 3e3) };
-      ws.onerror = () => ws.close();
-    }
-    function send(o) { if (ws?.readyState === 1) ws.send(JSON.stringify(o)) }
-    function dot(s) { document.getElementById('dot').className = 'dot ' + (['', 'ok', 'err'][s] || '') }
+  <!-- ── Main layout ──────────────────────────────────────────────────────────── -->
+  <div id="main">
 
-    /* card builders */
-    function mkCard(idx, cls = '') {
-      const su = Math.floor(idx / 9), va = idx % 9, sc = SC[su], sy = SS[su], vl = VL[va];
-      const e = document.createElement('div');
-      e.className = 'card ' + cls; e.title = vl + ' ' + SL[su];
-      e.innerHTML = `<div><div class="cv ${sc}">${vl}</div><div class="csm ${sc}">${sy}</div></div>` +
-        `<div class="clg ${sc}">${sy}</div>` +
-        `<div class="cbot"><div class="cv ${sc}">${vl}</div><div class="csm ${sc}">${sy}</div></div>`;
-      return e;
-    }
-    function mkFD() { const e = document.createElement('div'); e.className = 'card fd'; return e }
+    <!-- ── Board panel ─────────────────────────────────────────────────────── -->
+    <div id="board">
 
-    function render() {
-      if (!gs) return;
-      const obs = gs.obs;
-      if (!obs) { document.getElementById('no-game').style.display = ''; return }
-      document.getElementById('no-game').style.display = 'none';
-      document.getElementById('spts').textContent = obs.points_my_team ?? 0;
-      document.getElementById('opts').textContent = obs.points_opp_team ?? 0;
-      const ti = obs.trump;
-      const tsym = document.getElementById('trump-sym');
-      tsym.textContent = ti != null ? SS[ti] : '—';
-      tsym.className = ti != null ? SC[ti] : '';
-      document.getElementById('trump-lbl').textContent = ti != null ? SL[ti] : 'Kein Trumpf';
-      /* hands */
-      for (let s = 0; s < 4; s++)renderHand(s, obs);
-      /* trick */
-      const tc = document.getElementById('trick'); tc.innerHTML = '';
-      (obs.current_trick_indices || []).forEach(i => tc.appendChild(mkCard(i, 'trick')));
-      document.getElementById('trick-info').textContent = `Stich ${obs.trick_number ?? 1} · Pos ${(obs.trick_position ?? 0) + 1}/4`;
-      renderAI(obs);
-    }
+      <!-- Score bar -->
+      <div id="score-bar">
+        <div class="score-team">
+          <span class="team-lbl">Wir</span>
+          <span class="score-val" id="spts">0</span>
+        </div>
+        <div id="trump-disp">
+          <div id="trump-sym">—</div>
+          <div id="trump-lbl">Kein Trumpf</div>
+        </div>
+        <div class="score-team">
+          <span class="team-lbl">Gegner</span>
+          <span class="score-val" id="opts">0</span>
+        </div>
+      </div>
 
-    function renderHand(s, obs) {
-      const el = document.getElementById('h' + s); el.innerHTML = '';
-      if (s === 0 && obs.my_hand_indices?.length) {
-        const lm = new Map();
-        (obs.legal_actions || []).forEach(la => { if (la.card_idx != null) lm.set(la.card_idx, la.action_list_idx) });
-        const canPlay = hs.size === 0 || hs.has(0);
-        obs.my_hand_indices.forEach(i => {
-          const ai = lm.get(i); const legal = canPlay && ai !== undefined;
-          const c = mkCard(i, legal ? 'legal' : '');
-          if (legal) c.addEventListener('click', () => { send({ cmd: 'human_action', action_list_idx: ai }); lg(`Du spielst: ${VL[i % 9]} ${SS[Math.floor(i / 9)]}`) });
-          el.appendChild(c);
-        });
-      } else {
-        const n = obs.cards_remaining?.[s] ?? 0;
-        for (let i = 0; i < n; i++)el.appendChild(mkFD());
-      }
-    }
+      <!-- Table grid: top / left / felt / right / last-trick / bottom -->
+      <div id="tbl">
 
-    function renderAI(obs) {
-      const ct = document.getElementById('ai'); ct.innerHTML = '';
-      const names = ['Du (P0)', 'Links (P1)', 'Partner (P2)', 'Rechts (P3)'];
-      for (let s = 0; s < 4; s++) {
-        const inf = ainfo[s] || {}, probs = inf.probs || [], ent = inf.entropy ?? 0;
-        const ep = Math.min(ent / Math.log(Math.max(probs.length, 2)) * 100, 100);
-        const ec = ep < 30 ? 'hl' : ep < 65 ? 'hm' : 'hh';
-        const isH = hs.has(s);
-        const d = document.createElement('div'); d.className = 'ais';
-        d.innerHTML = `<div class="aih"><div class="ain">${names[s]}${isH ? ' 👤' : ''}</div>` +
-          `<div style="display:flex;align-items:center;gap:4px"><span style="font-size:10px;color:var(--dim)">H</span>` +
-          `<div class="hb"><div class="hf ${ec}" style="width:${ep.toFixed(0)}%"></div></div></div></div>` +
-          `<div class="prows"></div>` +
-          (s > 0 ? `<button class="tob${isH ? ' on' : ''}" data-s="${s}">${isH ? '✓ Du' : 'Übernehmen'}</button>` : '');
-        const top = [...probs].sort((a, b) => b.prob - a.prob).slice(0, 4);
-        const maxP = top[0]?.prob ?? 1;
-        const pr = d.querySelector('.prows');
-        top.forEach(p => {
-          const r = document.createElement('div'); r.className = 'pr';
-          const w = (p.prob / maxP * 70).toFixed(0);
-          r.innerHTML = `<div class="pl">${p.label}</div><div class="pb" style="width:${w}px"></div><div class="pp">${(p.prob * 100).toFixed(0)}%</div>`;
-          pr.appendChild(r);
-        });
-        d.querySelector('.tob')?.addEventListener('click', e => {
-          const st = +e.target.dataset.s; hs.has(st) ? hs.delete(st) : hs.add(st);
-          send({ cmd: 'set_seat', seat: st, human: hs.has(st) });
-          lg(`Sitz ${st} ${hs.has(st) ? 'übernommen' : 'freigegeben'}.`); render();
-        });
-        ct.appendChild(d);
-      }
-      /* board takeover buttons */
-      document.querySelectorAll('.tob[data-s]').forEach(b => {
-        const st = +b.dataset.s;
-        b.textContent = hs.has(st) ? '✓ Du' : 'Übernehmen';
-        b.className = 'tob' + (hs.has(st) ? ' on' : '');
-      });
-    }
+        <!-- P2 — top (partner) -->
+        <div class="pa" id="p2">
+          <div class="plbl"><span class="badge" id="b2">P2</span> Partner</div>
+          <div class="hand" id="h2"></div>
+        </div>
 
-    function tstat(d) {
-      document.getElementById('tg').textContent = d.game ?? '—';
-      document.getElementById('tst').textContent = ['Zufällig', 'Heuristik', 'Self-play'][d.stage] ?? '—';
-      document.getElementById('twr').textContent = d.win_rate != null ? (d.win_rate * 100).toFixed(0) + '%' : '—';
-      document.getElementById('tl').textContent = d.loss != null ? d.loss.toFixed(4) : '—';
-      if (d.loss != null) { lh.push(d.loss); if (lh.length > 100) lh.shift(); drawL() }
-    }
-    function drawL() {
-      const cv = document.getElementById('lcv'), ctx = cv.getContext('2d');
-      const W = cv.width, H = cv.height; ctx.clearRect(0, 0, W, H);
-      if (lh.length < 2) return;
-      const mn = Math.min(...lh), mx = Math.max(...lh), rng = mx - mn || 1;
-      ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 1.5; ctx.lineJoin = 'round'; ctx.beginPath();
-      lh.forEach((v, i) => { const x = i / (lh.length - 1) * W, y = H - ((v - mn) / rng * (H - 8)) - 4; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y) });
-      ctx.stroke(); ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath();
-      ctx.fillStyle = 'rgba(88,166,255,.07)'; ctx.fill();
-    }
-    function lg(msg) {
-      const el = document.getElementById('log');
-      const d = document.createElement('div'); d.className = 'le';
-      const t = new Date().toLocaleTimeString('de', { hour12: false });
-      d.textContent = `[${t}] ${msg}`; el.prepend(d);
-      while (el.children.length > 30) el.removeChild(el.lastChild);
-    }
+        <!-- P1 — left -->
+        <div class="pa" id="p1" style="justify-content:center">
+          <div class="plbl"><span class="badge" id="b1">P1</span></div>
+          <div class="hand handv" id="h1"></div>
+        </div>
 
-    document.getElementById('bn').addEventListener('click', () => { hs.clear(); send({ cmd: 'new_game' }); lg('Neues Spiel.') });
-    document.getElementById('bp').addEventListener('click', () => send({ cmd: 'proceed' }));
-    document.getElementById('ba').addEventListener('click', () => {
-      auto = !auto; const b = document.getElementById('ba');
-      b.textContent = auto ? '⏸ Pause' : '▶ Auto'; b.className = 'btn ' + (auto ? 'ba' : 'bs');
-      if (auto) autoStep(); else clearTimeout(atm);
-    });
-    function autoStep() { if (!auto) return; send({ cmd: 'proceed' }); atm = setTimeout(autoStep, 800) }
+        <!-- Center felt -->
+        <div id="felt">
+          <div id="trick"></div>
+          <div id="trick-info">—</div>
+          <div id="no-game" style="display:none">Kein aktives Spiel</div>
+        </div>
 
-    connect();
-    setTimeout(() => send({ cmd: 'new_game' }), 1200);
-  </script>
+        <!-- P3 — right -->
+        <div class="pa" id="p3" style="justify-content:center">
+          <div class="plbl"><span class="badge" id="b3">P3</span></div>
+          <div class="hand handv" id="h3"></div>
+        </div>
+
+        <!-- Last trick strip -->
+        <div id="last-trick-row" style="display:none">
+          <span class="lt-label" id="lt-label">Letzter Stich</span>
+          <div id="lt-cards" style="display:flex;gap:4px;align-items:center"></div>
+        </div>
+
+        <!-- P0 — bottom (us) -->
+        <div class="pa" id="p0">
+          <div class="plbl"><span class="badge you">Du</span></div>
+          <div class="hand" id="h0"></div>
+          <div id="bid-area"></div>
+        </div>
+
+      </div><!-- /#tbl -->
+    </div><!-- /#board -->
+
+    <!-- ── Sidebar: AI info + event log ────────────────────────────────────── -->
+    <div id="side">
+      <!-- AI seats -->
+      <div class="ss" style="flex-shrink:0">
+        <div class="st">KI-Analyse</div>
+        <div id="ai"></div>
+      </div>
+      <!-- Spielverlauf (event log) -->
+      <div id="evlog-wrap">
+        <div class="st">Spielverlauf</div>
+        <div id="evlog"></div>
+      </div>
+    </div>
+
+    <!-- ── Third column: debug ──────────────────────────────────────────────── -->
+    <div id="col3">
+      <div id="dbg-panel" style="display:none">
+        <div class="dbg-hdr">🔍 Debug — Alle Karten</div>
+        <div class="dbg-legend">
+          <span><span class="dot-c"></span> Sicher</span>
+          <span><span class="dot-p"></span> Möglich</span>
+          <span><span class="dot-n"></span> Ausgeschlossen</span>
+        </div>
+        <div id="dbg-content"></div>
+      </div>
+    </div>
+
+  </div><!-- /#main -->
+
+  <script src="/ui/app.js?v=3"></script>
 </body>
 
 </html>

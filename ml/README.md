@@ -291,11 +291,11 @@ The card-playing trick sequence is *partially* covered by the bitmask, but the *
 Vocabulary: ~145 tokens (see §3.1), embedded to 64-dim
 
 Transformer encoder:
-    Layers:    4
-    Heads:     4
-    Hidden:    64-dim
-    FF dim:    128
-    Max length: ~150 tokens (full game history fits easily)
+    Layers:    12
+    Heads:     8
+    Hidden:    256-dim
+    FF dim:    1024
+    Max length: ~1024 tokens (full game history fits easily)
 
 history_vec = mean_pool(encoder(event_sequence))    # 64-dim
 # ~400K params total for this block
@@ -378,8 +378,8 @@ GameState (Rust)
  └──────────────────────────────────────────────────────────────────┘
                                          │
  ┌────────────── Stream B: Event History ──────────────────────────┐
- │  token_ids → embed(64) → Transformer(4L,4H,64d)                 │
- │                              history_vec (mean pool) 64-dim     │
+ │  token_ids → embed(256) → Transformer(12L,8H,256d)               │
+ │                              history_vec (mean pool) 256-dim    │
  └──────────────────────────────────────────────────────────────────┘
                                          │
                          concat(state_vec, history_vec) → 192-dim
@@ -402,12 +402,12 @@ GameState (Rust)
 |---|---|
 | Card embedding MLP | ~500 |
 | Stream A (state encoder) | ~24K |
-| Stream B (4-layer Transformer, 64-dim) | ~400K |
+| Stream B (12-layer Transformer, 256-dim) | ~9.5M |
 | Action scoring head | ~7K |
 | Auxiliary heads | ~15K |
-| **Total** | **~450K** |
+| **Total** | **~10M** |
 
-This is deliberately tiny. The game complexity is in the *data structure*, not the model size. A 450K-param model will train in minutes on CPU for Phase 1 (endgame positions). Scale up if the model underfits as we add phases.
+The game complexity is in the *data structure*, not the model size. A 10M-param model will train reasonably fast on modern CPUs and instantly on GPUs for Phase 1 (endgame positions).
 
 ---
 
@@ -475,6 +475,30 @@ For every training game, at each decision point `t` where the current player is 
 - Reward: **outcome differential** — not raw terminal reward.
 - KL penalty from previous-stage policy to prevent catastrophic forgetting.
 - Training runs continuously; checkpoint saved after each evaluation window.
+
+### 6.4 Large-Scale Training (1 Million Games)
+
+To train the model on a massive scale (e.g., 1 million games) using 32 parallel threads for game simulation, first ensure your Python virtual environment is activated:
+
+**Windows:**
+```powershell
+.venv\Scripts\activate
+```
+
+**Linux/macOS:**
+```bash
+source .venv/bin/activate
+```
+
+Then, run the following command (which equates to 100 rounds of 10,000 games each):
+```bash
+python ml/train_online.py --rounds 100 --games-per-round 10000 --workers 32 --mc-rollouts 4 --device cuda
+```
+
+Alternatively, you can trigger this via the `justfile` preset:
+```bash
+just train-1m
+```
 
 ---
 

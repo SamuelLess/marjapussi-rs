@@ -1,6 +1,5 @@
 use crate::game::cards::{get_all_cards, Card, Suit, Value};
 use crate::game::gameevent::{ActionType, AnswerType, GameCallback, QuestionType};
-use crate::game::gamestate::GamePhase;
 use crate::game::player::PlaceAtTable;
 use crate::game::Game;
 
@@ -61,6 +60,8 @@ pub struct Observation {
     pub confirmed_bitmasks: [[bool; 36]; 3],
     /// Current hand as list of card indices (convenience for embeddings).
     pub my_hand_indices: Vec<usize>,
+    /// All hands (0=VH, 1=MH, etc). Always populated for debug purposes.
+    pub all_hands: Vec<Vec<usize>>,
     /// Cards in the current trick being played (in play order).
     pub current_trick_indices: Vec<usize>,
     /// Who played each card in the current trick (relative seat 0..3).
@@ -81,6 +82,8 @@ pub struct Observation {
     pub points_opp_team: i32,
     /// Cards remaining for each player (relative: me=0, left=1, partner=2, right=3).
     pub cards_remaining: [usize; 4],
+    /// The relative seat of the player who currently has the turn
+    pub active_player: usize,
     /// Player trump possibilities: 0=Own, 1=Yours, 2=Ours (from PlayerTrumpPossibilities).
     pub trump_possibilities: usize,
     /// Whether to last trick bonus is still available (last trick not yet started).
@@ -98,6 +101,7 @@ pub struct LegalActionObs {
     pub card_idx: Option<usize>,
     pub suit_idx: Option<usize>,
     pub bid_value: Option<i32>,
+    pub pass_cards: Option<Vec<usize>>,
     /// Index into the game's legal_actions list (used for stepping).
     pub action_list_idx: usize,
 }
@@ -193,6 +197,17 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
         my_hand_bitmask[idx] = true;
         my_hand_indices.push(idx);
     }
+    
+    // ── All hands (for debugging) ──────────────────────────────────────────────
+    let mut all_hands = vec![];
+    for p_idx in 0..4 {
+        let seat = state.player_at_place(PlaceAtTable((pov.0 + p_idx) % 4));
+        let mut seat_indices = vec![];
+        for card in &seat.cards {
+            seat_indices.push(card_index(card));
+        }
+        all_hands.push(seat_indices);
+    }
 
     // ── Opponent relative indices ────────────────────────────────────────────
     // relative: 0=left(next), 1=partner, 2=right(prev)
@@ -229,26 +244,39 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
     // Use all_events to track suit-following violations more accurately
     {
         let mut current_trick_lead_suit: Option<Suit> = None;
+        let mut historical_trump: Option<Suit> = None;
         let mut cards_in_trick: Vec<(PlaceAtTable, Card)> = vec![];
 
         for event in &game.all_events {
+            // Reconstruct the history of the trump suit as it was known AT THE TIME
+            if let ActionType::AnnounceTrump(suit) = &event.last_action.action_type {
+                historical_trump = Some(suit.clone());
+            } else if let Some(GameCallback::NewTrump(suit)) = &event.callback {
+                historical_trump = Some(suit.clone());
+            }
+
             if let ActionType::CardPlayed(card) = &event.last_action.action_type {
                 let player = &event.last_action.player;
                 if cards_in_trick.is_empty() {
                     // This player is leading the trick
-                    current_trick_lead_suit = Some(card.suit);
-                } else if let Some(lead_suit) = current_trick_lead_suit {
+                    current_trick_lead_suit = Some(card.suit.clone());
+                } else if let Some(lead_suit) = &current_trick_lead_suit {
                     // This player is following. Did they play off-suit?
-                    if card.suit != lead_suit {
-                        // Check: is the current winning card trump? If so, they might need trump.
-                        // Simplified: if they played a different suit AND the lead suit is not trump,
-                        // they have no more of lead suit.
-                        let trump_is_lead = state.trump.map(|t| t == lead_suit).unwrap_or(false);
-                        if !trump_is_lead && card.suit != state.trump.unwrap_or(card.suit) {
-                            // They played neither lead suit nor trump → no lead suit left
+                    if card.suit != *lead_suit {
+                        // Check: is the lead suit trump?
+                        let trump_is_lead = historical_trump.as_ref().map(|t| t == lead_suit).unwrap_or(false);
+                        
+                        // We only mark them as void in the lead suit if they:
+                        // A: Played a different suit when Trumps weren't lead
+                        // B: Played a non-trump when Trumps WERE lead
+                        let played_trump = historical_trump.as_ref().map(|t| t == &card.suit).unwrap_or(false);
+
+                        // If they didn't follow suit, they MUST be void in the lead suit.
+                        // (Even if they ruffed with a Trump, it still proves they are void in the led suit).
+                        if !trump_is_lead || !played_trump {
                             for (i, opp_place) in opp_places.iter().enumerate() {
                                 if opp_place.0 == player.0 {
-                                    opp_no_suit[i][suit_index(lead_suit)] = true;
+                                    opp_no_suit[i][suit_index(lead_suit.clone())] = true;
                                 }
                             }
                         }
@@ -293,16 +321,11 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
                     confirmed_bitmasks[slot][card_index(&ober)] = true;
                     confirmed_bitmasks[slot][card_index(&king)] = true;
                 }
-                ActionType::Answer(AnswerType::YesHalf(suit)) => {
-                    // At least one of Ober/King of this suit. The callback tells us more:
-                    // If GameCallback::NewTrump → they completed a pair with questioner,
-                    // so they hold the half that questioner asked about.
-                    // For simplicity: mark either Ober or King as possibly confirmed.
-                    // We don't know which half they have (could be either), so we mark
-                    // the suit as "has a half" — confirmed_bitmask half-confirmed.
-                    // We flag the Ober as a proxy (Python model will handle the ambiguity).
-                    let ober = Card { suit: *suit, value: Value::Ober };
-                    confirmed_bitmasks[slot][card_index(&ober)] = true;
+                ActionType::Answer(AnswerType::YesHalf(_suit)) => {
+                    // Phase 3 Fix: We do NOT natively "confirm" either the Ober or King here,
+                    // because we mathematically do not know which one they hold.
+                    // Doing so was feeding false certainty into the neurosymbolic stream.
+                    // Instead, we leave both cards as `possible = true` and let the network deduce it.
                 }
                 _ => {}
             }
@@ -314,7 +337,6 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
     let mut current_trick_players = vec![];
     {
         // Find who started the current trick from events
-        let mut trick_events: Vec<(usize, &Card)> = vec![];
         let cards_in_finished = state.all_tricks.len() * 4;
         let card_events: Vec<_> = game.all_events.iter()
             .filter(|e| matches!(e.last_action.action_type, ActionType::CardPlayed(_)))
@@ -338,12 +360,27 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
     let partner_place = pov.partner();
     let mut points_my_team = 0i32;
     let mut points_opp_team = 0i32;
+    
+    // Add points from tricks
     for trick in &state.all_tricks {
         let winner_party = trick.winner.party();
         if winner_party.0 == my_party.0 {
             points_my_team += trick.points.0;
         } else {
             points_opp_team += trick.points.0;
+        }
+    }
+
+    // Add points from announced pairs (trump calls)
+    for event in &game.all_events {
+        if let Some(crate::game::gameevent::GameCallback::NewTrump(suit)) = event.callback {
+            let caller_party = event.last_action.player.party();
+            let pair_points = crate::game::points::points_pair(suit).0;
+            if caller_party.0 == my_party.0 {
+                points_my_team += pair_points;
+            } else {
+                points_opp_team += pair_points;
+            }
         }
     }
 
@@ -380,7 +417,10 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
     let event_tokens = build_event_tokens(game, &pov, my_role);
 
     // ── Legal actions ─────────────────────────────────────────────────────────
-    let legal_actions = build_legal_actions(game);
+    let legal_actions = build_legal_actions(game, &pov);
+
+    // ── Active Player ─────────────────────────────────────────────────────────
+    let active_player = ((game.state.player_at_turn.0 + 4 - pov.0) as usize) % 4;
 
     Observation {
         played_bitmask,
@@ -388,11 +428,13 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
         possible_bitmasks,
         confirmed_bitmasks,
         my_hand_indices,
+        all_hands,
         current_trick_indices,
         current_trick_players,
         trump: state.trump.map(suit_index),
         trump_announced,
         my_role,
+        active_player,
         trick_number,
         trick_position,
         points_my_team,
@@ -551,30 +593,42 @@ fn build_event_tokens(game: &Game, pov: &PlaceAtTable, my_role: usize) -> Vec<u3
     toks
 }
 
-fn build_legal_actions(game: &Game) -> Vec<LegalActionObs> {
+fn build_legal_actions(game: &Game, pov: &PlaceAtTable) -> Vec<LegalActionObs> {
     use tokens::*;
     let mut result = vec![];
     for (idx, action) in game.legal_actions.iter().enumerate() {
         let obs = match &action.action_type {
-            ActionType::CardPlayed(card) => LegalActionObs {
-                action_token: ACT_PLAY,
-                card_idx: Some(card_index(card)),
-                suit_idx: None,
-                bid_value: None,
-                action_list_idx: idx,
+            ActionType::CardPlayed(card) => {
+                // Phase 1.1 Fix: X-Ray Vision Leak Protection.
+                // If it's NOT the perspective player's turn, we CANNOT leak the exact 
+                // card ID they are legally allowed to play, otherwise the neural net 
+                // can see the opponent's entire hand!
+                let is_pov_turn = game.state.player_at_turn == *pov;
+                LegalActionObs {
+                    action_token: ACT_PLAY,
+                    card_idx: if is_pov_turn { Some(card_index(card)) } else { None },
+                    suit_idx: None,
+                    bid_value: None,
+                    pass_cards: None,
+                    action_list_idx: idx,
+                }
             },
-            ActionType::NewBid(v) => LegalActionObs {
-                action_token: ACT_BID,
-                card_idx: None,
-                suit_idx: None,
-                bid_value: Some(*v),
-                action_list_idx: idx,
+            ActionType::NewBid(v) => {
+                LegalActionObs {
+                    action_token: ACT_BID,
+                    card_idx: None,
+                    suit_idx: None,
+                    bid_value: Some(*v),
+                    pass_cards: None,
+                    action_list_idx: idx,
+                }
             },
             ActionType::StopBidding => LegalActionObs {
                 action_token: ACT_PASS_STOP,
                 card_idx: None,
                 suit_idx: None,
                 bid_value: None,
+                pass_cards: None,
                 action_list_idx: idx,
             },
             ActionType::AnnounceTrump(suit) => LegalActionObs {
@@ -582,6 +636,7 @@ fn build_legal_actions(game: &Game) -> Vec<LegalActionObs> {
                 card_idx: None,
                 suit_idx: Some(suit_index(*suit)),
                 bid_value: None,
+                pass_cards: None,
                 action_list_idx: idx,
             },
             ActionType::Question(QuestionType::Yours) => LegalActionObs {
@@ -589,6 +644,7 @@ fn build_legal_actions(game: &Game) -> Vec<LegalActionObs> {
                 card_idx: None,
                 suit_idx: None,
                 bid_value: None,
+                pass_cards: None,
                 action_list_idx: idx,
             },
             ActionType::Question(QuestionType::YourHalf(suit)) => LegalActionObs {
@@ -596,6 +652,7 @@ fn build_legal_actions(game: &Game) -> Vec<LegalActionObs> {
                 card_idx: None,
                 suit_idx: Some(suit_index(*suit)),
                 bid_value: None,
+                pass_cards: None,
                 action_list_idx: idx,
             },
             ActionType::Answer(AnswerType::YesPair(suit)) => LegalActionObs {
@@ -603,6 +660,7 @@ fn build_legal_actions(game: &Game) -> Vec<LegalActionObs> {
                 card_idx: None,
                 suit_idx: Some(suit_index(*suit)),
                 bid_value: None,
+                pass_cards: None,
                 action_list_idx: idx,
             },
             ActionType::Answer(AnswerType::NoPair) => LegalActionObs {
@@ -610,6 +668,7 @@ fn build_legal_actions(game: &Game) -> Vec<LegalActionObs> {
                 card_idx: None,
                 suit_idx: None,
                 bid_value: None,
+                pass_cards: None,
                 action_list_idx: idx,
             },
             ActionType::Answer(AnswerType::YesHalf(suit)) => LegalActionObs {
@@ -617,6 +676,7 @@ fn build_legal_actions(game: &Game) -> Vec<LegalActionObs> {
                 card_idx: None,
                 suit_idx: Some(suit_index(*suit)),
                 bid_value: None,
+                pass_cards: None,
                 action_list_idx: idx,
             },
             ActionType::Answer(AnswerType::NoHalf(suit)) => LegalActionObs {
@@ -624,13 +684,15 @@ fn build_legal_actions(game: &Game) -> Vec<LegalActionObs> {
                 card_idx: None,
                 suit_idx: Some(suit_index(*suit)),
                 bid_value: None,
+                pass_cards: None,
                 action_list_idx: idx,
             },
-            ActionType::Pass(_) => LegalActionObs {
+            ActionType::Pass(cards) => LegalActionObs {
                 action_token: ACT_PASS_CARDS,
                 card_idx: None,
                 suit_idx: None,
                 bid_value: None,
+                pass_cards: Some(cards.iter().map(card_index).collect()),
                 action_list_idx: idx,
             },
             // Skip undo/start from ML training
@@ -652,11 +714,13 @@ pub struct ObservationJson {
     pub possible_bitmasks: Vec<Vec<bool>>,
     pub confirmed_bitmasks: Vec<Vec<bool>>,
     pub my_hand_indices: Vec<usize>,
+    pub all_hands: Vec<Vec<usize>>,
     pub current_trick_indices: Vec<usize>,
     pub current_trick_players: Vec<usize>,
     pub trump: Option<usize>,
     pub trump_announced: Vec<bool>,
     pub my_role: usize,
+    pub active_player: usize,
     pub trick_number: usize,
     pub trick_position: usize,
     pub points_my_team: i32,
@@ -676,11 +740,13 @@ impl From<Observation> for ObservationJson {
             possible_bitmasks: o.possible_bitmasks.iter().map(|b| b.to_vec()).collect(),
             confirmed_bitmasks: o.confirmed_bitmasks.iter().map(|b| b.to_vec()).collect(),
             my_hand_indices: o.my_hand_indices,
+            all_hands: o.all_hands,
             current_trick_indices: o.current_trick_indices,
             current_trick_players: o.current_trick_players,
             trump: o.trump,
             trump_announced: o.trump_announced.to_vec(),
             my_role: o.my_role,
+            active_player: o.active_player,
             trick_number: o.trick_number,
             trick_position: o.trick_position,
             points_my_team: o.points_my_team,

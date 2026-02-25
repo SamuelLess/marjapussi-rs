@@ -1,0 +1,4 @@
+torch
+numpy
+aiohttp
+# asyncio and other libs are part of the python standard library

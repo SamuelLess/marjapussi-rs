@@ -4,6 +4,7 @@ use crate::game::gameinfo::GameMetaInfo;
 use crate::game::gamestate::{FinishedTrick, GamePhase, GameState};
 use crate::game::points::{points_trick, Points};
 use crate::game::{cards, current_time_string, Game};
+use crate::game::player::PlayerTrumpPossibilities;
 
 impl ActionType {
     pub fn apply_action(
@@ -130,6 +131,7 @@ impl ActionType {
                 next_game_state.phase = GamePhase::Trick;
             }
             ActionType::Question(QuestionType::Yours) => {
+                next_game_state.player_at_turn_mut().trump = PlayerTrumpPossibilities::Yours;
                 next_game_state.phase = GamePhase::AnsweringPair;
                 next_game_state.player_at_turn = next_game_state.player_at_turn.partner();
             }
@@ -139,6 +141,7 @@ impl ActionType {
                 next_game_state.player_at_turn = next_game_state.player_at_turn.partner();
             }
             ActionType::Answer(AnswerType::NoPair) => {
+                next_game_state.partner_mut().trump = PlayerTrumpPossibilities::Ours;
                 next_game_state.phase = GamePhase::Trick;
                 next_game_state.player_at_turn = next_game_state.player_at_turn.partner();
             }
@@ -240,10 +243,20 @@ pub fn act_card(card: Card, next_game_state: &mut GameState) {
         // save trick
         let cards_in_last_trick: [Card; 4] =
             next_game_state.current_trick.clone().try_into().unwrap();
+        
+        // Add 20 points bonus for winning the last trick
+        let is_last_trick = next_game_state.all_tricks.len() == 8; // 9th trick
+        let base_points = points_trick(cards_in_last_trick.clone().try_into().unwrap());
+        let final_points = if is_last_trick {
+            base_points + Points(20)
+        } else {
+            base_points
+        };
+
         next_game_state.all_tricks.push(FinishedTrick {
             cards: cards_in_last_trick.clone(),
             winner: next_game_state.player_at_turn.clone(),
-            points: points_trick(cards_in_last_trick.try_into().unwrap()),
+            points: final_points,
         });
     }
 }

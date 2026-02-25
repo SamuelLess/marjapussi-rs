@@ -74,6 +74,11 @@ impl GameState {
         &self.players[self.player_at_turn.partner().0 as usize]
     }
 
+    pub fn partner_mut(&mut self) -> &mut Player {
+        let partner_idx = self.player_at_turn.partner().0 as usize;
+        &mut self.players[partner_idx]
+    }
+
     pub fn prev_player(&self) -> &Player {
         &self.players[self.player_at_turn.prev().0 as usize]
     }

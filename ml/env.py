@@ -14,17 +14,32 @@ import torch.nn.functional as F
 
 from model import MarjapussiNet, build_card_features_batch, NUM_CARDS
 
-BINARY_PATH = Path(__file__).parent.parent / "target" / "debug" / "ml_server.exe"
-if not BINARY_PATH.exists():
-    BINARY_PATH = Path(__file__).parent.parent / "target" / "debug" / "ml_server"
+# Prefer release binary for speed, fall back to debug
+possible_paths = [
+    Path(__file__).parent.parent / "target" / "release" / "ml_server.exe",
+    Path(__file__).parent.parent / "target" / "release" / "ml_server",
+    Path(__file__).parent.parent / "target" / "debug" / "ml_server.exe",
+    Path(__file__).parent.parent / "target" / "debug" / "ml_server",
+]
+BINARY_PATH = next((p for p in possible_paths if p.exists()), possible_paths[0])
 
 
 def _send(proc: subprocess.Popen, msg: dict) -> dict:
-    line = json.dumps(msg) + "\n"
-    proc.stdin.write(line)
-    proc.stdin.flush()
-    response = proc.stdout.readline()
-    return json.loads(response)
+    try:
+        line = json.dumps(msg) + "\n"
+        proc.stdin.write(line)
+        proc.stdin.flush()
+        response = proc.stdout.readline()
+        if not response:
+            # Process probably died
+            err = proc.stderr.read() if proc.stderr else ""
+            raise RuntimeError(f"ml_server died. Stderr: {err}")
+        return json.loads(response)
+    except Exception as e:
+        if proc.poll() is not None:
+             err = proc.stderr.read() if proc.stderr else "No stderr"
+             raise RuntimeError(f"ml_server (PID {proc.pid}) exited with {proc.returncode}. Stderr: {err}") from e
+        raise e
 
 
 class MarjapussiEnv:
@@ -49,15 +64,20 @@ class MarjapussiEnv:
             [str(BINARY_PATH)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
         )
 
-    def reset(self, pov: Optional[int] = None) -> dict:
+    def reset(self, pov: Optional[int] = None, start_trick: Optional[int] = None, seed: Optional[int] = None) -> dict:
         if pov is not None:
             self.pov = pov
-        resp = _send(self.proc, {"cmd": "new_game", "pov": self.pov})
+        cmd = {"cmd": "new_game", "pov": self.pov}
+        if start_trick is not None:
+            cmd["start_trick"] = start_trick
+        if seed is not None:
+            cmd["seed"] = seed
+        resp = _send(self.proc, cmd)
         if resp.get("type") == "error":
             raise RuntimeError(resp["message"])
         self._obs = resp["obs"]
@@ -74,6 +94,23 @@ class MarjapussiEnv:
         info = resp.get("outcome") or {}
         return self._obs, self._done, info
 
+    def get_heuristic_action(self) -> int:
+        """Ask the Rust backend what action the deterministic heuristic policy would take."""
+        resp = _send(self.proc, {"cmd": "get_heuristic_action"})
+        if resp.get("type") == "error":
+            raise RuntimeError(resp["message"])
+        return resp.get("action_idx", 0)
+
+    def debug_pass(self, card_indices: list[int]) -> tuple[dict, bool, dict]:
+        """Force a pass action via card indices for debug purposes"""
+        resp = _send(self.proc, {"cmd": "debug_pass", "card_indices": card_indices})
+        if resp.get("type") == "error":
+            raise RuntimeError(resp["message"])
+        self._obs = resp["obs"]
+        self._done = resp.get("done", False)
+        info = resp.get("outcome") or {}
+        return self._obs, self._done, info
+
     def observe(self) -> dict:
         resp = _send(self.proc, {"cmd": "observe"})
         return resp["obs"]
@@ -82,9 +119,13 @@ class MarjapussiEnv:
         resp = _send(self.proc, {"cmd": "run_to_end", "policy": policy})
         return resp.get("outcome", {})
 
-    def try_all_actions(self, policy: str = "heuristic") -> list[dict]:
-        resp = _send(self.proc, {"cmd": "try_all_actions", "policy": policy})
+    def try_all_actions(self, policy: str = "heuristic", num_rollouts: int = 1) -> list[dict]:
+        resp = _send(self.proc, {"cmd": "try_all_actions", "policy": policy, "num_rollouts": num_rollouts})
         return resp.get("branches", [])
+
+    def get_advantages(self, policy: str = "heuristic", num_rollouts: int = 1) -> list[float]:
+        resp = _send(self.proc, {"cmd": "get_advantages", "policy": policy, "num_rollouts": num_rollouts})
+        return resp.get("advantages", [])
 
     @property
     def obs(self) -> Optional[dict]:
@@ -117,7 +158,7 @@ def obs_to_tensors(obs: dict) -> dict:
 
     # Trump one-hot [1, 5]: 4 suits + none
     trump_idx = obs.get('trump')
-    trump_oh = torch.zeros(1, 5)
+    trump_oh = torch.zeros((1, 5))
     if trump_idx is not None:
         trump_oh[0, trump_idx] = 1.0
     else:
@@ -138,6 +179,12 @@ def obs_to_tensors(obs: dict) -> dict:
     # Cards remaining (normalized) [1, 4]
     cards_rem = torch.tensor(obs['cards_remaining'], dtype=torch.float32).unsqueeze(0) / 9.0
 
+    # Active Parity (one-hot team) [1, 2]
+    # In 'obs', active_player is a relative index 0..3 (where 0=me, 1=next, 2=partner, 3=prev)
+    # Parity 0 means my team (0 or 2), Parity 1 means opp team (1 or 3)
+    parity_idx = obs['active_player'] % 2
+    active_parity = F.one_hot(torch.tensor([parity_idx]), 2).float()
+
     obs_a = {
         'card_feats': build_card_features_batch([obs]),   # [1, 36, 16]
         'my_hand_mask': bitmask('my_hand_bitmask'),
@@ -151,15 +198,16 @@ def obs_to_tensors(obs: dict) -> dict:
         'role_oh': role_oh,
         'trick_pos_oh': trick_pos_oh,
         'trick_num': torch.tensor([[obs['trick_number'] / 9.0]]),
-        'pts_mine': torch.tensor([[obs['points_my_team'] / 120.0]]),
-        'pts_opp': torch.tensor([[obs['points_opp_team'] / 120.0]]),
+        'pts_mine': torch.tensor([[obs['points_my_team'] / 420.0]]),
+        'pts_opp': torch.tensor([[obs['points_opp_team'] / 420.0]]),
         'last_bonus': torch.tensor([[float(obs['last_trick_bonus_live'])]]),
+        'active_parity': active_parity,
     }
 
     # Token sequence [1, L]
-    tokens = obs['event_tokens']
+    tokens = obs['event_tokens'][-1024:]  # Safely truncate to MAX_SEQ_LEN to prevent PyTorch pos_emb assert
     token_ids = torch.tensor(tokens, dtype=torch.long).unsqueeze(0)
-    token_mask = torch.zeros(1, len(tokens), dtype=torch.bool)
+    token_mask = torch.zeros((1, len(tokens)), dtype=torch.bool)
 
     # Legal action features [1, A, 51]
     action_feats, action_mask = encode_legal_actions(obs['legal_actions'])
@@ -175,7 +223,7 @@ def obs_to_tensors(obs: dict) -> dict:
 
 def trick_bitmask(obs: dict) -> torch.Tensor:
     """Build [1, 36] bitmask for cards currently in the trick."""
-    mask = torch.zeros(1, NUM_CARDS)
+    mask = torch.zeros((1, NUM_CARDS))
     for idx in obs.get('current_trick_indices', []):
         mask[0, idx] = 1.0
     return mask
@@ -184,8 +232,8 @@ def trick_bitmask(obs: dict) -> torch.Tensor:
 def encode_legal_actions(legal: list[dict]) -> tuple[torch.Tensor, torch.Tensor]:
     """Encode legal actions as [1, A, 51] feature tensors."""
     A = max(len(legal), 1)
-    feats = torch.zeros(1, A, 51)
-    mask = torch.ones(1, A, dtype=torch.bool)  # True = ignored
+    feats = torch.zeros((1, A, 51))
+    mask = torch.ones((1, A), dtype=torch.bool)  # True = ignored
 
     # Action type one-hot: 15 types
     ACTION_TOKENS = {40: 0, 41: 1, 42: 2, 43: 3, 44: 4,

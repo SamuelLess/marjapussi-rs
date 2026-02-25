@@ -1,0 +1,114 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.amp import autocast
+
+def train_step(model, opt, scaler, batch, use_amp: bool, train_phase: str = "trick") -> dict:
+    model.train()
+    with autocast(device_type='cuda', enabled=use_amp):
+        logits, _, pts_pred, value_pred = model({
+            "obs_a":        batch["obs_a"],
+            "token_ids":    batch["token_ids"],
+            "token_mask":   batch["token_mask"],
+            "action_feats": batch["action_feats"],
+            "action_mask":  batch["action_mask"],
+        })
+        # Mask logits *before* softmax so -inf doesn't corrupt the denominator
+        # IMPORTANT: We use -1e4 instead of -1e9 because PyTorch AMP (Float16) 
+        # has a minimum representable value of roughly -65504.
+        masked_logits = logits.masked_fill(batch["action_mask"], -1e4)
+        log_p = F.log_softmax(masked_logits, dim=-1)
+        chosen_lp = log_p.gather(1, batch["action_idx"].unsqueeze(1)).squeeze(1)
+        
+        # PPO Policy Loss
+        # Clamp log_prob_old to avoid exp(-(-inf)) = exp(inf) = NaN
+        safe_log_prob_old = torch.clamp(batch["log_prob_old"], min=-100.0)
+        # Clamp chosen_lp to avoid extremely large negative values
+        chosen_lp_clamped = torch.clamp(chosen_lp, min=-100.0)
+        ratio = torch.exp(chosen_lp_clamped - safe_log_prob_old)
+        
+        adv = batch["advantage"]
+        # Normalize advantages per batch
+        if adv.numel() > 1:
+            adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+            
+        clip_epsilon = 0.2
+        surr1 = ratio * adv
+        surr2 = torch.clamp(ratio, 1.0 - clip_epsilon, 1.0 + clip_epsilon) * adv
+        policy_loss = -torch.min(surr1, surr2).mean()
+        
+        # Value Loss
+        value_loss = F.mse_loss(value_pred, batch["value"])
+        
+        # Entropy Bonus
+        probs = F.softmax(logits, dim=-1)
+        safe_log_p = log_p.masked_fill(batch["action_mask"], 0.0)
+        entropy = -(probs * safe_log_p).sum(dim=-1).mean()
+        entropy_loss = -0.01 * entropy
+        
+        # Points Prediction Loss
+        pts_loss = F.mse_loss(pts_pred, batch["pts_target"]) * 0.3
+        
+        # Total Base Loss
+        
+        # Bid Masking Regularizer:
+        # Check if the chosen action is a BID (action_type 1 is one-hot at index 1 of action_feats)
+        chosen_feats = batch["action_feats"].gather(1, batch["action_idx"].unsqueeze(1).unsqueeze(2).expand(-1, -1, 51)).squeeze(1)
+        is_bid = chosen_feats[:, 1] > 0.5
+        
+        if train_phase == "bidding_value":
+            # Zero out policy loss for bidding actions, let it just learn the Value
+            policy_loss = (torch.min(surr1, surr2) * (~is_bid).float()).mean() * -1.0
+            
+        loss = policy_loss + 0.5 * value_loss + entropy_loss + pts_loss
+        
+        # bid_value is at index 32, normalized as (val - 120)/300.0
+        # point_pred my_pts is normalized as pts / 420.0
+        # If the bid is higher than predicted score, add a heavy penalty
+        if is_bid.any():
+            bid_values_norm = chosen_feats[is_bid, 32]
+            # convert bid norm back to actual bid, then norm for 420
+            bid_actual = bid_values_norm * 300.0 + 120.0
+            
+            # Predict our team's points (assuming pov=0, so index 0)
+            predicted_pts_actual = pts_pred[is_bid, 0] * 420.0
+            
+            # (Removed the exponential overbid padding because it artificially exploded the sigmoid bounds)
+
+    if torch.isnan(loss) or torch.isinf(loss):
+        print(f"\n[DEBUG] NaN detected. policy: {policy_loss.item()}, value: {value_loss.item()}, entropy: {entropy_loss.item()}, pts_loss: {pts_loss.item()}")
+        
+        # Skip this batch entirely to prevent corrupting gradients
+        return {
+            "total": float('nan'), 
+            "policy": float('nan'), 
+            "value": float('nan'),
+            "entropy": float('nan'),
+            "pts": float('nan')
+        }
+
+    opt.zero_grad(set_to_none=True)
+    scaler.scale(loss).backward()
+    scaler.unscale_(opt)
+    
+    # Check for NaN/Inf in gradients after unscaling, before clipping
+    grads_valid = True
+    for p in model.parameters():
+        if p.grad is not None:
+            if not torch.isfinite(p.grad).all():
+                grads_valid = False
+                break
+                
+    if grads_valid:
+        nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        scaler.step(opt)
+        
+    scaler.update()
+    
+    return {
+        "total": loss.item() if grads_valid else float('nan'), 
+        "policy": policy_loss.item() if grads_valid else float('nan'), 
+        "value": value_loss.item() if grads_valid else float('nan'),
+        "entropy": entropy.item() if grads_valid else float('nan'),
+        "pts": pts_loss.item() if grads_valid else float('nan')
+    }

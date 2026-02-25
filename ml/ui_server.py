@@ -17,10 +17,11 @@ RUNS_DIR       = ML / "runs"
 
 sys.path.insert(0, str(ML))
 
+from env import MarjapussiEnv, obs_to_tensors
+
 try:
     import torch, torch.nn.functional as F
     from model import MarjapussiNet
-    from env import MarjapussiEnv, obs_to_tensors
     TORCH_OK = True
 except ImportError as e:
     TORCH_OK = False
@@ -40,7 +41,7 @@ class GameManager:
             self.model = MarjapussiNet(); self.model.eval()
             p = checkpoint or (CHECKPOINT_DIR / "latest.pt")
             if Path(p).exists():
-                self.model.load_state_dict(torch.load(str(p), map_location="cpu")); print(f"[model] loaded {p}")
+                self.model.load_state_dict(torch.load(str(p), map_location="cpu"), strict=False); print(f"[model] loaded {p}")
 
     def new_game(self):
         if self.env:
@@ -67,24 +68,53 @@ class GameManager:
         try:
             tensors = obs_to_tensors(self.obs)
             with torch.no_grad():
-                logits, _, _ = self.model(tensors)
+                logits, _, _, _ = self.model(tensors)
             probs = F.softmax(logits[0], dim=-1).tolist()
             legal = self.obs.get("legal_actions", [])
             entropy = -sum(p * math.log(p + 1e-9) for p in probs if p > 0)
-            ATOK = {40:"Spiel",41:"Biete",42:"Passe",43:"Gib",44:"Trumpf",
-                    45:"Paar?",46:"Halb?",47:"Ja-P",48:"Nein",49:"Ja-H",50:"Nein"}
-            VALS = ['6','7','8','9','U','O','K','10','A']
-            SUITS= ['♣','◆','◆','♥']
+            SUITS = ['Grün', 'Eichel', 'Schellen', 'Herz']
+            VALS  = ['6', '7', '8', '9', 'U', 'O', 'K', '10', 'A']
+            ATOK  = {40:'spielt', 41:'Biete', 42:'Passe', 43:'Gib',
+                     44:'Trumpf', 45:'Paar?', 46:'Halb?',
+                     47:'Ja-Paar', 48:'Nein-Paar', 49:'Ja-Halb', 50:'Nein-Halb'}
             prob_list = []
             for i, la in enumerate(legal):
                 if i >= len(probs): break
-                lbl = ATOK.get(la.get("action_token", 40), "?")
+                tok = la.get("action_token", 40)
+                base = ATOK.get(tok, f"Akt{tok}")
+                # Fully-qualify label with card, bid value or suit
                 if la.get("card_idx") is not None:
-                    c = la["card_idx"]; lbl += f" {VALS[c%9]}{SUITS[c//9]}"
+                    c = la["card_idx"]
+                    lbl = f"{base} {VALS[c % 9]} {SUITS[c // 9]}"
+                elif la.get("bid_value") is not None:
+                    lbl = f"{base} {la['bid_value']}"
+                elif la.get("suit_idx") is not None:
+                    lbl = f"{base} {SUITS[la['suit_idx']]}"
+                else:
+                    lbl = base
                 prob_list.append({"label": lbl, "prob": probs[i]})
             return {0: {"probs": prob_list, "entropy": entropy}}
         except Exception as e:
+            print(f"[ai_info error] {e}")
             return {}
+
+    def debug_state(self):
+        """Returns all hands and completed tricks for debug overlay."""
+        result = {"hands": {}, "tricks": []}
+        if self.obs is None:
+            return result
+        # All hands (now reliably provided by Rust in the obs JSON)
+        hands = self.obs.get("all_hands", [])
+        if hands:
+            result["hands"] = {str(i): hand for i, hand in enumerate(hands)}
+        # Completed tricks from outcome info
+        if hasattr(self, "info") and self.info:
+            result["tricks"] = self.info.get("tricks", [])
+        # Include belief bitmasks from obs for symbolic reasoning display
+        result["confirmed_bitmasks"] = self.obs.get("confirmed_bitmasks", [])
+        result["possible_bitmasks"]  = self.obs.get("possible_bitmasks", [])
+        result["event_tokens"]       = self.obs.get("event_tokens", [])
+        return result
 
     def ai_step(self):
         if self.done or self.obs is None: return
@@ -94,7 +124,7 @@ class GameManager:
         if TORCH_OK and self.model is not None:
             try:
                 tensors = obs_to_tensors(self.obs)
-                with torch.no_grad(): logits, _, _ = self.model(tensors)
+                with torch.no_grad(): logits, _, _, _ = self.model(tensors)
                 probs = F.softmax(logits[0], dim=-1)
                 chosen = int(torch.multinomial(probs, 1).item())
                 chosen = min(chosen, len(legal) - 1)
@@ -104,12 +134,15 @@ class GameManager:
     def step(self, action_list_idx):
         self.obs, self.done, self.info = self.env.step(action_list_idx)
 
+    def debug_pass(self, card_indices):
+        self.obs, self.done, self.info = self.env.debug_pass(card_indices)
+
     def load_checkpoint(self, name):
         if not TORCH_OK: return
         p = CHECKPOINT_DIR / f"{name}.pt"
         if not p.exists(): p = Path(name)
         if p.exists():
-            self.model.load_state_dict(torch.load(str(p), map_location="cpu"))
+            self.model.load_state_dict(torch.load(str(p), map_location="cpu"), strict=False)
             self.model.eval(); print(f"[model] reloaded {p}")
 
 
@@ -137,12 +170,18 @@ async def handle(ws, cmd):
         if not game.done: game.ai_step()
     elif act == "human_action":
         game.step(cmd.get("action_list_idx", 0))
+    elif act == "debug_pass":
+        game.debug_pass(cmd.get("card_indices", []))
     elif act == "set_seat":
         s = cmd.get("seat", 0)
         if cmd.get("human"): game.human_seats.add(s)
         else: game.human_seats.discard(s)
     elif act == "load_checkpoint":
         game.load_checkpoint(cmd.get("checkpoint", "latest"))
+    elif act == "debug_state":
+        ds = game.debug_state()
+        await ws.send_str(json.dumps({"type": "debug_state", **ds}))
+        return  # don't broadcast full state for debug
     await broadcast()
 
 async def broadcast():
@@ -151,7 +190,7 @@ async def broadcast():
     for c in clients:
         try: await c.send_str(msg)
         except: dead.add(c)
-    clients -= dead
+    clients.difference_update(dead)
 
 async def watch_log(_app):
     asyncio.create_task(_watch_log())
@@ -179,6 +218,12 @@ async def _watch_log():
 async def index(request):
     return web.FileResponse(UI / "index.html")
 
+async def cleanup(app):
+    """Gracefully terminate the Rust subprocess on Ctrl+C."""
+    if game and game.env:
+        try: game.env.close()
+        except: pass
+
 def main():
     global game
     p = argparse.ArgumentParser()
@@ -197,8 +242,10 @@ def main():
     app = web.Application()
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/", index)
-    app.router.add_static("/ui", UI)     # serve CSS/JS if needed
+    app.router.add_static("/ui", UI)        # serve CSS/JS
+    app.router.add_static("/suits", UI / "suits")  # serve suit SVG images
     app.on_startup.append(watch_log)
+    app.on_cleanup.append(cleanup)
 
     print(f"\n🃏  Marjapussi KI  →  http://localhost:{args.port}")
     print(f"   PyTorch: {'✓' if TORCH_OK else '✗ (demo mode)'}")
