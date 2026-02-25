@@ -1,3 +1,8 @@
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
+
 use crate::game::cards::{get_all_cards, Card, Suit, Value};
 use crate::game::gameevent::{ActionType, AnswerType, GameCallback, QuestionType};
 use crate::game::player::PlaceAtTable;
@@ -170,6 +175,188 @@ pub fn bid_token(value: i32) -> u32 {
     tokens::BID_BASE + ((value - 120) / 5) as u32
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HalfConstraint {
+    Unknown,
+    RequireAtLeastOne,
+    RequireBoth,
+}
+
+type HiddenSetOutput = ([[bool; 36]; 3], [[bool; 36]; 3]);
+
+fn hidden_set_cache() -> &'static Mutex<HashMap<u64, HiddenSetOutput>> {
+    static CACHE: OnceLock<Mutex<HashMap<u64, HiddenSetOutput>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+static ENABLE_HIDDEN_SET_CONSTRAINTS: AtomicBool = AtomicBool::new(true);
+
+fn hidden_set_constraints_enabled() -> bool {
+    ENABLE_HIDDEN_SET_CONSTRAINTS.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+fn set_hidden_set_constraints_enabled(enabled: bool) -> bool {
+    ENABLE_HIDDEN_SET_CONSTRAINTS.swap(enabled, Ordering::Relaxed)
+}
+
+fn hash_hidden_set_input(
+    possible_bitmasks: &[[bool; 36]; 3],
+    confirmed_bitmasks: &[[bool; 36]; 3],
+    half_constraints: &[[HalfConstraint; 4]; 3],
+) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for seat in 0..3 {
+        for card in 0..36 {
+            possible_bitmasks[seat][card].hash(&mut hasher);
+            confirmed_bitmasks[seat][card].hash(&mut hasher);
+        }
+    }
+    for seat in 0..3 {
+        for suit in 0..4 {
+            match half_constraints[seat][suit] {
+                HalfConstraint::Unknown => 0u8,
+                HalfConstraint::RequireAtLeastOne => 1u8,
+                HalfConstraint::RequireBoth => 2u8,
+            }
+            .hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
+
+fn enforce_hidden_set_constraints(
+    possible_bitmasks: &mut [[bool; 36]; 3],
+    confirmed_bitmasks: &mut [[bool; 36]; 3],
+    half_constraints: &[[HalfConstraint; 4]; 3],
+) {
+    let key = hash_hidden_set_input(
+        possible_bitmasks,
+        confirmed_bitmasks,
+        half_constraints,
+    );
+    if let Ok(cache) = hidden_set_cache().lock() {
+        if let Some((cached_possible, cached_confirmed)) = cache.get(&key) {
+            *possible_bitmasks = *cached_possible;
+            *confirmed_bitmasks = *cached_confirmed;
+            return;
+        }
+    }
+
+    const MAX_ITERS: usize = 16;
+
+    for _ in 0..MAX_ITERS {
+        let mut changed = false;
+
+        // Enforce uniqueness for already confirmed cards.
+        for card in 0..36 {
+            let mut owner: Option<usize> = None;
+            for seat in 0..3 {
+                if confirmed_bitmasks[seat][card] {
+                    if !possible_bitmasks[seat][card] {
+                        confirmed_bitmasks[seat][card] = false;
+                        changed = true;
+                        continue;
+                    }
+                    if owner.is_none() {
+                        owner = Some(seat);
+                    } else {
+                        confirmed_bitmasks[seat][card] = false;
+                        changed = true;
+                    }
+                }
+            }
+            if let Some(owner_seat) = owner {
+                for seat in 0..3 {
+                    if seat != owner_seat {
+                        if confirmed_bitmasks[seat][card] {
+                            confirmed_bitmasks[seat][card] = false;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Apply Q&A half constraints (per seat and suit).
+        for seat in 0..3 {
+            for suit in 0..4 {
+                let ober_idx = suit * 9 + 5;
+                let king_idx = suit * 9 + 6;
+                match half_constraints[seat][suit] {
+                    HalfConstraint::RequireBoth => {
+                        if !possible_bitmasks[seat][ober_idx] {
+                            possible_bitmasks[seat][ober_idx] = true;
+                            changed = true;
+                        }
+                        if !possible_bitmasks[seat][king_idx] {
+                            possible_bitmasks[seat][king_idx] = true;
+                            changed = true;
+                        }
+                        if !confirmed_bitmasks[seat][ober_idx] {
+                            confirmed_bitmasks[seat][ober_idx] = true;
+                            changed = true;
+                        }
+                        if !confirmed_bitmasks[seat][king_idx] {
+                            confirmed_bitmasks[seat][king_idx] = true;
+                            changed = true;
+                        }
+                    }
+                    HalfConstraint::RequireAtLeastOne => {
+                        let ober_possible = possible_bitmasks[seat][ober_idx];
+                        let king_possible = possible_bitmasks[seat][king_idx];
+                        if !ober_possible && king_possible && !confirmed_bitmasks[seat][king_idx] {
+                            confirmed_bitmasks[seat][king_idx] = true;
+                            changed = true;
+                        }
+                        if !king_possible && ober_possible && !confirmed_bitmasks[seat][ober_idx] {
+                            confirmed_bitmasks[seat][ober_idx] = true;
+                            changed = true;
+                        }
+                    }
+                    HalfConstraint::Unknown => {}
+                }
+            }
+        }
+
+        if !changed {
+            break;
+        }
+    }
+
+    // Final consistency pass: confirmed implies possible and uniqueness.
+    for card in 0..36 {
+        let mut owner: Option<usize> = None;
+        for seat in 0..3 {
+            if confirmed_bitmasks[seat][card] {
+                if !possible_bitmasks[seat][card] {
+                    confirmed_bitmasks[seat][card] = false;
+                    continue;
+                }
+                if owner.is_none() {
+                    owner = Some(seat);
+                } else {
+                    confirmed_bitmasks[seat][card] = false;
+                }
+            }
+        }
+        if let Some(owner_seat) = owner {
+            for seat in 0..3 {
+                if seat != owner_seat {
+                    confirmed_bitmasks[seat][card] = false;
+                }
+            }
+        }
+    }
+
+    if let Ok(mut cache) = hidden_set_cache().lock() {
+        if cache.len() > 2048 {
+            cache.clear();
+        }
+        cache.insert(key, (*possible_bitmasks, *confirmed_bitmasks));
+    }
+}
+
 // ─── Main observation builder ─────────────────────────────────────────────────
 
 pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
@@ -308,6 +495,7 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
 
     // ── Confirmed cards per opponent ──────────────────────────────────────────
     let mut confirmed_bitmasks = [[false; 36]; 3];
+    let mut half_constraints = [[HalfConstraint::Unknown; 4]; 3];
     for event in &game.all_events {
         let answerer = &event.last_action.player;
         // Find which relative opponent slot this answerer corresponds to
@@ -320,13 +508,23 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
                     let king = Card { suit: *suit, value: Value::King };
                     confirmed_bitmasks[slot][card_index(&ober)] = true;
                     confirmed_bitmasks[slot][card_index(&king)] = true;
+                    half_constraints[slot][suit_index(*suit)] = HalfConstraint::RequireBoth;
                 }
-                ActionType::Answer(AnswerType::YesHalf(_suit)) => {
+                ActionType::Answer(AnswerType::YesHalf(suit)) => {
                     // Phase 3 Fix: We do NOT natively "confirm" either the Ober or King here,
                     // because we mathematically do not know which one they hold.
                     // Doing so was feeding false certainty into the neurosymbolic stream.
                     // Instead, we leave both cards as `possible = true` and let the network deduce it.
+                    let suit_i = suit_index(*suit);
+                    match half_constraints[slot][suit_i] {
+                        HalfConstraint::RequireBoth => {}
+                        _ => {
+                            half_constraints[slot][suit_i] = HalfConstraint::RequireAtLeastOne;
+                        }
+                    }
                 }
+                ActionType::Answer(AnswerType::NoHalf(_suit)) => {}
+                ActionType::Answer(AnswerType::NoPair) => {}
                 _ => {}
             }
         }
@@ -401,6 +599,13 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
         state.player_at_place(partner_place.clone()).cards.len(),
         state.player_at_place(pov.prev()).cards.len(),
     ];
+    if hidden_set_constraints_enabled() {
+        enforce_hidden_set_constraints(
+            &mut possible_bitmasks,
+            &mut confirmed_bitmasks,
+            &half_constraints,
+        );
+    }
 
     // ── Trick number & position ───────────────────────────────────────────────
     let trick_number = state.all_tricks.len() + 1;
@@ -769,6 +974,9 @@ impl From<Observation> for ObservationJson {
 mod tests {
     use super::*;
     use crate::game::Game;
+    use crate::game::player::PlaceAtTable;
+    use rand::prelude::IndexedRandom;
+    use std::sync::{Mutex, OnceLock};
 
     #[test]
     fn test_observation_builds() {
@@ -790,6 +998,129 @@ mod tests {
     fn test_card_index_roundtrip() {
         for (i, card) in get_all_cards().iter().enumerate() {
             assert_eq!(card_index(card), i);
+        }
+    }
+
+    #[test]
+    fn test_set_constraints_single_candidate_stays_unique_possible() {
+        let mut possible = [[false; 36]; 3];
+        let mut confirmed = [[false; 36]; 3];
+        let half = [[HalfConstraint::Unknown; 4]; 3];
+
+        possible[2][7] = true;
+        enforce_hidden_set_constraints(&mut possible, &mut confirmed, &half);
+
+        assert!(!confirmed[2][7]);
+        assert!(!possible[0][7]);
+        assert!(!possible[1][7]);
+        assert!(possible[2][7]);
+    }
+
+    #[test]
+    fn test_set_constraints_yes_half_forces_other_card() {
+        let mut possible = [[true; 36]; 3];
+        let mut confirmed = [[false; 36]; 3];
+        let mut half = [[HalfConstraint::Unknown; 4]; 3];
+
+        // Seat 0 said YesHalf(Green), but Ober(Green) is impossible -> King(Green) must be true.
+        half[0][0] = HalfConstraint::RequireAtLeastOne;
+        let green_ober = 5; // suit 0 * 9 + Ober index 5
+        let green_king = 6; // suit 0 * 9 + King index 6
+        possible[0][green_ober] = false;
+        possible[0][green_king] = true;
+
+        enforce_hidden_set_constraints(&mut possible, &mut confirmed, &half);
+        assert!(confirmed[0][green_king]);
+    }
+
+    fn test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn assert_hidden_inference_consistent(base: &Observation, inferred: &Observation) {
+        for seat in 0..3 {
+            for card in 0..36 {
+                if inferred.confirmed_bitmasks[seat][card] {
+                    assert!(
+                        inferred.possible_bitmasks[seat][card],
+                        "confirmed card must be possible (seat={seat}, card={card})"
+                    );
+                }
+            }
+        }
+
+        for card in 0..36 {
+            let mut conf_seats = 0usize;
+            for seat in 0..3 {
+                if inferred.confirmed_bitmasks[seat][card] {
+                    conf_seats += 1;
+                }
+            }
+            assert!(conf_seats <= 1, "card {card} confirmed in multiple seats");
+        }
+
+        for hidden_seat in 1..=3 {
+            for &card in &inferred.all_hands[hidden_seat] {
+                if base.possible_bitmasks[hidden_seat - 1][card] {
+                    assert!(
+                        inferred.possible_bitmasks[hidden_seat - 1][card],
+                        "inference removed true card that baseline allowed (seat={hidden_seat}, card={card})"
+                    );
+                }
+            }
+        }
+
+        for card in 0..36 {
+            if inferred.played_bitmask[card] || inferred.my_hand_bitmask[card] {
+                continue;
+            }
+            let mut base_candidates = 0usize;
+            let mut inf_candidates = 0usize;
+            for seat in 0..3 {
+                if base.possible_bitmasks[seat][card] {
+                    base_candidates += 1;
+                }
+                if inferred.possible_bitmasks[seat][card] {
+                    inf_candidates += 1;
+                }
+            }
+            if base_candidates > 0 {
+                assert!(
+                    inf_candidates > 0,
+                    "inference removed all candidates for unseen card {card}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_hidden_inference_soundness_random_games() {
+        let _guard = test_lock().lock().expect("test mutex poisoned");
+        let mut rng = rand::rng();
+        let names = ["P0", "P1", "P2", "P3"].map(|s| s.to_string());
+
+        for g in 0..20 {
+            let mut game = Game::new(format!("rand_{g}"), names.clone(), None);
+            let mut guard_steps = 0usize;
+            while !game.ended() && guard_steps < 400 {
+                for pov in 0..4 {
+                    let prev = set_hidden_set_constraints_enabled(false);
+                    let base_obs = build_observation(&game, PlaceAtTable(pov));
+                    set_hidden_set_constraints_enabled(true);
+                    let inf_obs = build_observation(&game, PlaceAtTable(pov));
+                    set_hidden_set_constraints_enabled(prev);
+                    assert_hidden_inference_consistent(&base_obs, &inf_obs);
+                }
+                let action = game
+                    .legal_actions
+                    .choose(&mut rng)
+                    .expect("game must always have at least one legal action")
+                    .clone();
+                game = game.apply_action(action).expect("legal action should apply");
+                guard_steps += 1;
+            }
+            assert!(guard_steps < 400, "game did not terminate within guard limit");
         }
     }
 }

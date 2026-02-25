@@ -107,6 +107,50 @@ class GameManager:
         result["confirmed_bitmasks"] = self.obs.get("confirmed_bitmasks", [])
         result["possible_bitmasks"]  = self.obs.get("possible_bitmasks", [])
         result["event_tokens"]       = self.obs.get("event_tokens", [])
+        cards_remaining = self.obs.get("cards_remaining", [0, 0, 0, 0])
+
+        # Set-theoretic inference diagnostics (symbolic side).
+        possible = self.obs.get("possible_bitmasks", [[False] * 36 for _ in range(3)])
+        confirmed = self.obs.get("confirmed_bitmasks", [[False] * 36 for _ in range(3)])
+        stats = {}
+        for rel_opp in range(3):
+            poss_count = sum(1 for i in range(36) if bool(possible[rel_opp][i]))
+            conf_count = sum(1 for i in range(36) if bool(confirmed[rel_opp][i]))
+            need = int(cards_remaining[rel_opp + 1]) if (rel_opp + 1) < len(cards_remaining) else 0
+            stats[str(rel_opp + 1)] = {
+                "possible": poss_count,
+                "confirmed": conf_count,
+                "need": need,
+                "slack": max(0, poss_count - need),
+            }
+
+        singleton_cards = 0
+        for card_idx in range(36):
+            cands = sum(1 for rel_opp in range(3) if bool(possible[rel_opp][card_idx]))
+            if cands == 1:
+                singleton_cards += 1
+
+        true_possible_violations = 0
+        wrong_confirmed = 0
+        all_hands = self.obs.get("all_hands", [])
+        for rel_opp in range(3):
+            seat_idx = rel_opp + 1
+            truth = set(all_hands[seat_idx]) if seat_idx < len(all_hands) else set()
+            for card_idx in truth:
+                if card_idx < 0 or card_idx >= 36:
+                    continue
+                if not bool(possible[rel_opp][card_idx]):
+                    true_possible_violations += 1
+            for card_idx in range(36):
+                if bool(confirmed[rel_opp][card_idx]) and card_idx not in truth:
+                    wrong_confirmed += 1
+
+        result["inference_stats"] = {
+            **stats,
+            "singleton_cards": singleton_cards,
+            "true_possible_violations": true_possible_violations,
+            "wrong_confirmed": wrong_confirmed,
+        }
 
         # Hidden-state predictions (relative opponents: left, partner, right).
         if TORCH_OK and self.model is not None:
@@ -115,8 +159,6 @@ class GameManager:
                 with torch.no_grad():
                     _, card_logits, _, _ = self.model(tensors)
                 probs = torch.sigmoid(card_logits[0]).tolist()  # [3][36]
-                cards_remaining = self.obs.get("cards_remaining", [0, 0, 0, 0])
-                possible = self.obs.get("possible_bitmasks", [[False] * 36 for _ in range(3)])
 
                 predicted_hands = {}
                 impossible_mass = {}
@@ -133,6 +175,40 @@ class GameManager:
                 result["predicted_hands"] = predicted_hands
                 result["predicted_card_probs"] = probs
                 result["predicted_impossible_mass"] = impossible_mass
+
+                # Live hidden-loss diagnostics (same semantics as training head):
+                # positive-card BCE + impossible-card BCE (uncertain negatives ignored).
+                eps = 1e-8
+                pos_losses = []
+                imp_losses = []
+                pos_hits = []
+                imp_probs = []
+                for rel_opp in range(3):
+                    seat_idx = rel_opp + 1
+                    truth = set(all_hands[seat_idx]) if seat_idx < len(all_hands) else set()
+                    row = probs[rel_opp]
+                    for card_idx in range(36):
+                        p = min(max(float(row[card_idx]), eps), 1.0 - eps)
+                        is_true = card_idx in truth
+                        is_possible = bool(possible[rel_opp][card_idx])
+                        if is_true:
+                            pos_losses.append(-math.log(p))
+                            pos_hits.append(1.0 if p >= 0.5 else 0.0)
+                        elif not is_possible:
+                            imp_losses.append(-math.log(1.0 - p))
+                            imp_probs.append(p)
+
+                pos_bce = (sum(pos_losses) / len(pos_losses)) if pos_losses else 0.0
+                imp_bce = (sum(imp_losses) / len(imp_losses)) if imp_losses else 0.0
+                pos_acc = (sum(pos_hits) / len(pos_hits)) if pos_hits else 0.0
+                imp_mass = (sum(imp_probs) / len(imp_probs)) if imp_probs else 0.0
+                result["predicted_hidden_loss"] = {
+                    "pos_bce": pos_bce,
+                    "impossible_bce": imp_bce,
+                    "total": pos_bce + 2.0 * imp_bce,
+                    "pos_acc": pos_acc,
+                    "impossible_mass": imp_mass,
+                }
             except Exception as e:
                 result["prediction_error"] = str(e)
         return result

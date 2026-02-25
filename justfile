@@ -41,6 +41,16 @@ train-65k: setup-ml
     @echo "Running training using virtual environment python: {{python}}"
     ML_SERVER_BIN={{ml_server_bin}} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {{python}} ml/train_online.py --rounds 512 --games-per-round 128 --workers 32 --mc-rollouts 4 --device cuda --eval-every 16 --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3
 
+# 128k-game run profile: 256 games/round, 24 workers (optimized for this machine).
+train-128k: setup-ml
+    @echo "Running 128k profile using virtual environment python: {{python}}"
+    ML_SERVER_BIN={{ml_server_bin}} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {{python}} ml/train_online.py --rounds 512 --games-per-round 256 --workers 24 --mc-rollouts 4 --device cuda --eval-every 16 --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3 --hidden-loss-weight 0.10 --impossible-penalty-weight 2.00 --named-checkpoint set_theory_128k.pt
+
+# Same 128k profile but with user-defined named checkpoint (auto-resume if it exists).
+train-128k-named run_name="set_theory_128k": setup-ml
+    @echo "Running named 128k profile checkpoint={{run_name}}.pt using virtual environment python: {{python}}"
+    ML_SERVER_BIN={{ml_server_bin}} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {{python}} ml/train_online.py --rounds 512 --games-per-round 256 --workers 24 --mc-rollouts 4 --device cuda --eval-every 16 --checkpoint ml/checkpoints/{{run_name}}.pt --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3 --hidden-loss-weight 0.10 --impossible-penalty-weight 2.00 --named-checkpoint {{run_name}}.pt
+
 # Resume training from a specific checkpoint and start round
 resume-train run_name="latest" start_round="10": setup-ml
     @echo "Resuming training using virtual environment python: {{python}}"

@@ -47,6 +47,8 @@ let dbgPossible = [];
 let dbgPredHands = {};
 let dbgPredCardProbs = [];
 let dbgPredImpossibleMass = {};
+let dbgPredHiddenLoss = null;
+let dbgInference = {};
 
 // Render-diff state (prevents unnecessary DOM churn)
 const prevHand = ['', '', '', ''];  // per seat: sorted card-idx CSV
@@ -82,6 +84,8 @@ function connect() {
         dbgPredHands = m.predicted_hands || {};
         dbgPredCardProbs = m.predicted_card_probs || [];
         dbgPredImpossibleMass = m.predicted_impossible_mass || {};
+        dbgPredHiddenLoss = m.predicted_hidden_loss || null;
+        dbgInference = m.inference_stats || {};
         renderDebugPanel(gs?.obs);
         render(); // update table face-up cards
         break;
@@ -906,9 +910,53 @@ function renderDebugPanel(obs) {
 
   // ── Section 2: Completed tricks in order ──
   // Hidden-state prediction from the model (relative opponents)
+  // Set-theory inference diagnostics from symbolic engine.
+  if (Object.keys(dbgInference).length) {
+    const infTitle = mk('div', 'dbg-section-title', 'Set-Theory Inference');
+    p.appendChild(infTitle);
+    for (let s = 1; s < 4; s++) {
+      const st = dbgInference[String(s)] || dbgInference[s] || {};
+      const need = Number(st.need || 0);
+      const conf = Number(st.confirmed || 0);
+      const poss = Number(st.possible || 0);
+      const slack = Number(st.slack || 0);
+      p.appendChild(
+        mk(
+          'div',
+          'dbg-seat-lbl',
+          `${PNAMES[s]} | confirmed ${conf}/${need} | possible ${poss} | slack ${slack}`
+        )
+      );
+    }
+    const singleton = Number(dbgInference.singleton_cards || 0);
+    const viol = Number(dbgInference.true_possible_violations || 0);
+    const wrong = Number(dbgInference.wrong_confirmed || 0);
+    p.appendChild(
+      mk(
+        'div',
+        'dbg-seat-lbl',
+        `Global: singletonCards ${singleton} | truePossibleViolations ${viol} | wrongConfirmed ${wrong}`
+      )
+    );
+  }
+
   if (Object.keys(dbgPredHands).length) {
     const predTitle = mk('div', 'dbg-section-title', 'KI-Hand-Prognose');
     p.appendChild(predTitle);
+    if (dbgPredHiddenLoss) {
+      const posBce = Number(dbgPredHiddenLoss.pos_bce || 0);
+      const impBce = Number(dbgPredHiddenLoss.impossible_bce || 0);
+      const total = Number(dbgPredHiddenLoss.total || 0);
+      const posAcc = Number(dbgPredHiddenLoss.pos_acc || 0);
+      const impMass = Number(dbgPredHiddenLoss.impossible_mass || 0);
+      p.appendChild(
+        mk(
+          'div',
+          'dbg-seat-lbl',
+          `HiddenLoss total ${total.toFixed(4)} | posBCE ${posBce.toFixed(4)} | impBCE ${impBce.toFixed(4)} | posAcc ${posAcc.toFixed(3)} | impMass ${impMass.toFixed(3)}`
+        )
+      );
+    }
 
     for (let s = 1; s < 4; s++) {
       const pred = dbgPredHands[String(s)] || dbgPredHands[s] || [];

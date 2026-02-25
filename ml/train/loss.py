@@ -67,6 +67,8 @@ def train_step(
         hidden_target = batch.get("hidden_target")
         hidden_possible = batch.get("hidden_possible")
         hidden_loss = torch.tensor(0.0, device=logits.device)
+        hidden_pos_loss = torch.tensor(0.0, device=logits.device)
+        hidden_impossible_loss = torch.tensor(0.0, device=logits.device)
         hidden_pos_acc = torch.tensor(0.0, device=logits.device)
         impossible_mass = torch.tensor(0.0, device=logits.device)
         if hidden_target is not None and hidden_possible is not None:
@@ -82,6 +84,7 @@ def train_step(
             pos_count = pos_mask.float().sum()
             if pos_count > 0:
                 pos_loss = (bce_all * pos_mask.float()).sum() / pos_count
+                hidden_pos_loss = pos_loss
                 hidden_probs = torch.sigmoid(card_logits)
                 hidden_pos_acc = (hidden_probs[pos_mask] > 0.5).float().mean()
             else:
@@ -96,6 +99,7 @@ def train_step(
                         reduction="none",
                     ) * impossible_mask.float()
                 ).sum() / impossible_count
+                hidden_impossible_loss = impossible_loss
                 hidden_probs = torch.sigmoid(card_logits)
                 impossible_mass = hidden_probs[impossible_mask].mean()
             else:
@@ -146,6 +150,8 @@ def train_step(
             "entropy": float('nan'),
             "pts": float('nan'),
             "hidden": float('nan'),
+            "hidden_pos_loss": float('nan'),
+            "hidden_impossible_loss": float('nan'),
             "hidden_pos_acc": float('nan'),
             "impossible_mass": float('nan'),
             "approx_kl": float('nan'),
@@ -177,6 +183,8 @@ def train_step(
         "entropy": entropy.item() if grads_valid else float('nan'),
         "pts": pts_loss.item() if grads_valid else float('nan'),
         "hidden": hidden_loss.item() if grads_valid else float('nan'),
+        "hidden_pos_loss": hidden_pos_loss.item() if grads_valid else float('nan'),
+        "hidden_impossible_loss": hidden_impossible_loss.item() if grads_valid else float('nan'),
         "hidden_pos_acc": hidden_pos_acc.item() if grads_valid else float('nan'),
         "impossible_mass": impossible_mass.item() if grads_valid else float('nan'),
         "approx_kl": approx_kl.item() if grads_valid else float('nan'),

@@ -452,6 +452,7 @@ def train_online(
     max_adv_calls_per_episode: int = 1,
     hidden_loss_weight: float = 0.3,
     impossible_penalty_weight: float = 2.0,
+    named_checkpoint: str | None = None,
 ):
     configure_torch_runtime(device=device, workers=workers)
     use_amp = device.startswith("cuda")
@@ -463,6 +464,13 @@ def train_online(
     if checkpoint and Path(checkpoint).exists():
         model.load_state_dict(torch.load(checkpoint, map_location=device))
         print(f"Loaded checkpoint: {checkpoint}")
+
+    named_ckpt_path: Path | None = None
+    if named_checkpoint:
+        ncp = Path(named_checkpoint)
+        named_ckpt_path = ncp if ncp.is_absolute() else (CKPT_DIR / ncp)
+        named_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+        Log.info(f"Named checkpoint target: {named_ckpt_path}")
 
     Log.success(f"Online training | rounds={rounds} | games/round={games_per_round} "
                 f"| workers={workers} | MC-rollouts={mc_rollouts} | ppo_epochs={ppo_epochs} | device={device}")
@@ -674,7 +682,7 @@ def train_online(
         print(f"  - Samples:  {n_trans} transitions")
         print(f"  - OptEpochs:{epoch}")
         print(f"  - Losses:   Total: {avg_loss.get('total',0):.4f} | Pol: {avg_loss.get('policy',0):.4f} | Val: {avg_loss.get('value',0):.4f} | Ent: {avg_loss.get('entropy',0):.4f} | Pts: {avg_loss.get('pts',0):.4f} | Hidden: {avg_loss.get('hidden',0):.4f} | KL: {avg_loss.get('approx_kl',0):.4f} | Clip: {avg_loss.get('clipfrac',0):.3f}")
-        print(f"  - HiddenAux: PosAcc: {avg_loss.get('hidden_pos_acc',0):.3f} | ImpossibleMass: {avg_loss.get('impossible_mass',0):.3f}")
+        print(f"  - HiddenAux: PosBCE: {avg_loss.get('hidden_pos_loss',0):.4f} | ImpBCE: {avg_loss.get('hidden_impossible_loss',0):.4f} | PosAcc: {avg_loss.get('hidden_pos_acc',0):.3f} | ImpossibleMass: {avg_loss.get('impossible_mass',0):.3f}")
         print(f"  - Time:     Sim: {gen_time:.1f}s | Opt: {train_time:.1f}s")
 
         log_entry = {"round": rnd+1, "stage": stage, "n_games": games_per_round,
@@ -701,6 +709,8 @@ def train_online(
             Log.info(f"Saved 50k milestone checkpoint: {ckpt_name}")
 
         torch.save(model.state_dict(), CKPT_DIR / "latest.pt")
+        if named_ckpt_path is not None:
+            torch.save(model.state_dict(), named_ckpt_path)
         with open(log_path, "a") as f:
             f.write(json.dumps({"event": "update", **log_entry}) + "\n")
 
@@ -713,6 +723,8 @@ def train_online(
 
     Log.success(f"Done. Best test point diff: {best_diff:+.1f}")
     Log.info(f"Checkpoint: {CKPT_DIR / 'latest.pt'}")
+    if named_ckpt_path is not None:
+        Log.info(f"Named checkpoint: {named_ckpt_path}")
 
 
 if __name__ == "__main__":
@@ -762,6 +774,8 @@ if __name__ == "__main__":
                    help="Weight of hidden-hand auxiliary loss in total loss")
     p.add_argument("--impossible-penalty-weight", type=float, default=2.0,
                    help="Penalty multiplier for predicting cards that are impossible by symbolic constraints")
+    p.add_argument("--named-checkpoint", default=None,
+                   help="Optional checkpoint filename/path to update every round")
     args = p.parse_args()
 
     if torch.cuda.is_available():
@@ -792,4 +806,5 @@ if __name__ == "__main__":
         max_adv_calls_per_episode=args.max_adv_calls_per_episode,
         hidden_loss_weight=args.hidden_loss_weight,
         impossible_penalty_weight=args.impossible_penalty_weight,
+        named_checkpoint=args.named_checkpoint,
     )
