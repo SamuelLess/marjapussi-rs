@@ -178,21 +178,16 @@ pub fn allowed_cards<'a>(
             if !higher_cards.is_empty() {
                 return higher_cards;
             }
-            
-            // "Must Trump" rule: If we are void in the lead suit, and we cannot overtrump, 
-            // but we DO hold a trump card, we MUST play a trump card. We cannot fall through
-            // to "play any card" just because our trumps are too weak.
-            if let Some(t_suit) = trump {
+            if let Some(trump_suit) = trump {
                 let trump_cards: Vec<&Card> = cards
                     .clone()
                     .into_iter()
-                    .filter(|c| c.suit == t_suit)
+                    .filter(|c| c.suit == trump_suit)
                     .collect();
                 if !trump_cards.is_empty() {
                     return trump_cards;
                 }
             }
-            
             cards
         }
         None => {
@@ -366,6 +361,8 @@ mod tests {
         let ga: Card = "g-A".parse().unwrap();
         let gz: Card = "g-Z".parse().unwrap();
         let go: Card = "g-O".parse().unwrap();
+        let s7: Card = "s-7".parse().unwrap();
+        let e7: Card = "e-7".parse().unwrap();
         let so: Card = "s-O".parse().unwrap();
         let ro: Card = "r-O".parse().unwrap();
         let ru: Card = "r-U".parse().unwrap();
@@ -405,6 +402,13 @@ mod tests {
         assert_eq!(
             allowed_cards(trick, cards.clone(), Some(Suit::Red), false),
             vec![&g9, &gz, &ga]
+        );
+        // no led suit available, trump exists but cannot beat current trump: still must trump
+        let trick = vec![&go, &ro];
+        let no_led_with_low_trump = vec![&ru, &s7, &e7];
+        assert_eq!(
+            allowed_cards(trick, no_led_with_low_trump, Some(Suit::Red), false),
+            vec![&ru]
         );
     }
 }

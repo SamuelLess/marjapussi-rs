@@ -2,9 +2,9 @@ use crate::game::cards::{high_card, Card};
 use crate::game::gameevent::{ActionType, AnswerType, GameAction, GameCallback, QuestionType};
 use crate::game::gameinfo::GameMetaInfo;
 use crate::game::gamestate::{FinishedTrick, GamePhase, GameState};
+use crate::game::player::PlayerTrumpPossibilities;
 use crate::game::points::{points_trick, Points};
 use crate::game::{cards, current_time_string, Game};
-use crate::game::player::PlayerTrumpPossibilities;
 
 impl ActionType {
     pub fn apply_action(
@@ -131,12 +131,17 @@ impl ActionType {
                 next_game_state.phase = GamePhase::Trick;
             }
             ActionType::Question(QuestionType::Yours) => {
-                next_game_state.player_at_turn_mut().trump = PlayerTrumpPossibilities::Yours;
+                let asker = next_game_state.player_at_place_mut(action.player.clone());
+                if asker.trump == PlayerTrumpPossibilities::Own {
+                    asker.trump = PlayerTrumpPossibilities::Yours;
+                }
                 next_game_state.phase = GamePhase::AnsweringPair;
                 next_game_state.player_at_turn = next_game_state.player_at_turn.partner();
             }
             ActionType::Question(QuestionType::YourHalf(suit)) => {
                 //can happen multiple times per suit
+                let asker = next_game_state.player_at_place_mut(action.player.clone());
+                asker.trump = PlayerTrumpPossibilities::Ours;
                 next_game_state.phase = GamePhase::AnsweringHalf(suit);
                 next_game_state.player_at_turn = next_game_state.player_at_turn.partner();
             }
@@ -243,20 +248,14 @@ pub fn act_card(card: Card, next_game_state: &mut GameState) {
         // save trick
         let cards_in_last_trick: [Card; 4] =
             next_game_state.current_trick.clone().try_into().unwrap();
-        
-        // Add 20 points bonus for winning the last trick
-        let is_last_trick = next_game_state.all_tricks.len() == 8; // 9th trick
-        let base_points = points_trick(cards_in_last_trick.clone().try_into().unwrap());
-        let final_points = if is_last_trick {
-            base_points + Points(20)
-        } else {
-            base_points
-        };
-
+        let mut trick_points = points_trick(cards_in_last_trick.to_vec());
+        if next_game_state.all_tricks.len() == 8 {
+            trick_points += Points(20);
+        }
         next_game_state.all_tricks.push(FinishedTrick {
             cards: cards_in_last_trick.clone(),
             winner: next_game_state.player_at_turn.clone(),
-            points: final_points,
+            points: trick_points,
         });
     }
 }
