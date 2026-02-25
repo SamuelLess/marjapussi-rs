@@ -1,5 +1,10 @@
 # Marjapussi ML Experiment
 
+Canonical docs for architecture and implementation contracts now live in:
+
+1. `docs/ML_PROJECT_OVERVIEW.md`
+2. `docs/ml/README.md`
+
 A deep RL + Transformer approach to learning Marjapussi, trained from endgame outward.
 
 ---
@@ -433,23 +438,25 @@ The game complexity is in the *data structure*, not the model size. A 10M-param 
 
 ## 6. Training Pipeline
 
-### 6.1 Bootstrapping Without Human Data (Default Path)
+### 6.1 Training Strategy Profiles (Configurable)
 
-Human game data is **not required**. Training works via a curriculum:
+Training strategy is configurable so methods can be compared experimentally:
 
-| Stage | Opponent | Purpose |
+| Strategy | Recommended use | Sequence |
 |---|---|---|
-| 0: Random (first ~200 games) | Random legal moves | Explore game space; learn basic legality |
-| 1: Heuristic (~500 games) | Rule-based agent | Stable opponent; learn trick-taking basics |
-| 2: Self-play (ongoing) | Trained model copies | Model improves against itself |
+| Human-first laddering | Production/default when vetted human data exists | Supervised pretrain -> RL/self-play |
+| Pure self-play curriculum | Baseline and ablation runs | Heuristic/random curriculum -> RL/self-play |
+| Hybrid | Research on data mixing schedules | Interleave supervised and self-play updates |
 
-The same PPO + counterfactual evaluation loop runs throughout. If human game data becomes available later, a behavior-cloning loss can be added as an optional enhancement.
+All strategies should use the same evaluation harness so results remain comparable.
 
-### 6.2 Pre-training on Human Data (Optional)
+### 6.2 Human Dataset Pretraining
 
-**Data source**: Recorded games from `marjapussi.de` (when available).
+**Data source**: Recorded human games (for example `ml/dataset/games.json` converted to decision-point NDJSON).
 
 **Objectives**: next-move prediction, masked card prediction, team points regression.
+
+**Policy**: recommended first stage for mainline checkpoints when high-quality human data is available.
 
 ### 6.2 Counterfactual Move Evaluation (the Core Training Signal)
 
@@ -529,7 +536,7 @@ Each step: Python sends `{"action": <token_id>}` on stdin, Rust responds with `{
 
 | Question | Decision |
 |---|---|
-| Human game data required? | **No** — bootstrapping curriculum (random → heuristic → self-play) |
+| Training strategy | **Configurable** — human-first laddering, pure self-play, or hybrid |
 | Python interface | **JSON stdio** (spawn Rust binary as subprocess) |
 | Python framework | **Pure PyTorch** |
 | Model size | **~10M params** (see §4.8); scale up only if underfitting |

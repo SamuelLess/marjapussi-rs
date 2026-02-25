@@ -1,25 +1,49 @@
 # MarjaPussi
 
-Rust implementation of MarjaPussi, mostly following the rules
-from [Wurzel e. V.](http://wurzel.org/pussi/indexba7e.html?seite=regeln), exactly following the rules
-on [marjapussi.de](https://marjapussi.de/rules).
+Rust implementation of Marjapussi with a rules engine, ML tooling, and local UI support.
 
-This package is hopefully going to be used for the backend of [marjapussi.de](https://marjapussi.de).
+Rule reference:
+
+1. [marjapussi.de rules](https://marjapussi.de/rules) (primary reference)
+2. [Wurzel e. V. rules](http://wurzel.org/pussi/indexba7e.html?seite=regeln) (secondary reference)
+
+## Project Vision
+
+This project aims to provide a fair Marjapussi AI stack that can:
+
+1. Play against humans with just a player observation interface.
+2. Play self-play matches for training and evaluation.
+3. Expose multiple difficulty levels through checkpointed models.
+4. Continue training from human game logs, self-play, or mixed strategies.
+
+## Repository Contents
+
+1. Core Rust game engine under `src/game`.
+2. ML interface and server code under `src/ml`.
+3. Python training/inference code under `ml/`.
+4. Local browser UI under `ml/ui/`.
+
+## Documentation
+
+1. Project overview: `docs/ML_PROJECT_OVERVIEW.md`
+2. ML spec index: `docs/ml/README.md`
+3. Existing ML planning notes: `ml/README.md`
+
+If there is a conflict, `docs/ML_PROJECT_OVERVIEW.md` and `docs/ml/*` are the canonical implementation contracts.
 
 ## Usage
 
-For now this contains the full implementation of the game and two utility binaries:
+Current utility binaries include:
 
-- `interactive` for playing the game in the terminal with full information against yourself.
-  This also shows how the game struct can be interacted with.
-- `parse` for parsing from the game format used by the python
-  implementation [here](https://github.com/SamuelLess/marjapussi).
+1. `interactive`: play in terminal with full information.
+2. `parse_legacy`: parse legacy game export format.
+3. `ml_server`: JSON interface for the ML pipeline.
+4. `ml_generate`: generate training datasets from simulated games.
 
 ## License
 
-This project is licensed under the GPL-3.0 License – see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GPL-3.0 License. See [LICENSE](LICENSE).
 
 ## Contributing
 
-Please do not hesitate to reach out to [me](mailto:samuel@lessmann.dev).
-There are a lot of undocumented future plans I would love to discuss with you.
+Please open issues or pull requests with clear reproduction steps and expected behavior.
