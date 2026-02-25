@@ -2,6 +2,7 @@ use crate::game::cards::{high_card, Card};
 use crate::game::gameevent::{ActionType, AnswerType, GameAction, GameCallback, QuestionType};
 use crate::game::gameinfo::GameMetaInfo;
 use crate::game::gamestate::{FinishedTrick, GamePhase, GameState};
+use crate::game::player::PlayerTrumpPossibilities;
 use crate::game::points::{points_trick, Points};
 use crate::game::{cards, current_time_string, Game};
 
@@ -130,11 +131,17 @@ impl ActionType {
                 next_game_state.phase = GamePhase::Trick;
             }
             ActionType::Question(QuestionType::Yours) => {
+                let asker = next_game_state.player_at_place_mut(action.player.clone());
+                if asker.trump == PlayerTrumpPossibilities::Own {
+                    asker.trump = PlayerTrumpPossibilities::Yours;
+                }
                 next_game_state.phase = GamePhase::AnsweringPair;
                 next_game_state.player_at_turn = next_game_state.player_at_turn.partner();
             }
             ActionType::Question(QuestionType::YourHalf(suit)) => {
                 //can happen multiple times per suit
+                let asker = next_game_state.player_at_place_mut(action.player.clone());
+                asker.trump = PlayerTrumpPossibilities::Ours;
                 next_game_state.phase = GamePhase::AnsweringHalf(suit);
                 next_game_state.player_at_turn = next_game_state.player_at_turn.partner();
             }
