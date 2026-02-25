@@ -29,17 +29,26 @@ def resolve_ml_server_binary(binary_path: Optional[str | Path] = None) -> Path:
             raise FileNotFoundError(f"ML_SERVER_BIN points to missing binary: {p}")
         return p
 
-    # Prefer whichever binary (release/debug) is newest to avoid stale builds.
-    candidates = [
+    # Prefer release builds for better simulation throughput.
+    release_candidates = [
         Path(__file__).parent.parent / "target" / "release" / "ml_server.exe",
         Path(__file__).parent.parent / "target" / "release" / "ml_server",
+    ]
+    for p in release_candidates:
+        if p.exists():
+            return p
+
+    # Fall back to debug when release is not available.
+    debug_candidates = [
         Path(__file__).parent.parent / "target" / "debug" / "ml_server.exe",
         Path(__file__).parent.parent / "target" / "debug" / "ml_server",
     ]
-    existing = [p for p in candidates if p.exists()]
-    if existing:
-        return max(existing, key=lambda p: p.stat().st_mtime)
-    return candidates[0]
+    for p in debug_candidates:
+        if p.exists():
+            return p
+
+    # Default expected location (release) when neither exists yet.
+    return release_candidates[0]
 
 
 def _send(proc: subprocess.Popen, msg: dict) -> dict:
@@ -77,7 +86,7 @@ class MarjapussiEnv:
         if not self.binary_path.exists():
             raise FileNotFoundError(
                 f"ml_server binary not found at {self.binary_path}. "
-                "Run: cargo build --bin ml_server"
+                "Run: cargo build --release --bin ml_server"
             )
         self.proc = subprocess.Popen(
             [str(self.binary_path)],

@@ -47,14 +47,7 @@ class GameManager:
         if self.env:
             try: self.env.close()
             except: pass
-        bin_path = ROOT / "target" / "debug" / "ml_server.exe"
-        if not bin_path.exists():
-            bin_path = ROOT / "target" / "debug" / "ml_server"
-        if not bin_path.exists():
-            raise FileNotFoundError(
-                "ml_server binary not found — run: cargo build --bin ml_server")
         self.env  = MarjapussiEnv(pov=0)
-        self.env.env_binary = str(bin_path)          # ensure right path
         self.obs  = self.env.reset()
         self.done = self.env.done
 
@@ -237,7 +230,7 @@ def main():
         print("[game] started OK")
     except Exception as e:
         print(f"[warn] Could not start game: {e}")
-        print("[warn] Build ml_server first: cargo build --bin ml_server")
+        print("[warn] Build ml_server first: cargo build --release --bin ml_server")
 
     app = web.Application()
     app.router.add_get("/ws", ws_handler)

@@ -13,7 +13,7 @@ Usage:
   python ml/train_from_dataset.py --data ml/data/dataset.ndjson --device cuda --batch 1024 --workers 4
 """
 
-import argparse, json, math, random, sys, time
+import argparse, json, math, os, random, sys, time
 from pathlib import Path
 from torch.utils.data import IterableDataset, DataLoader
 import torch, torch.nn as nn, torch.nn.functional as F
@@ -26,6 +26,20 @@ from env import obs_to_tensors
 
 CKPT_DIR = Path(__file__).parent / "checkpoints"
 CKPT_DIR.mkdir(exist_ok=True)
+
+
+def configure_torch_runtime(device: str, workers: int) -> None:
+    """Apply safe runtime settings for better training throughput."""
+    torch.set_float32_matmul_precision("high")
+
+    if device.startswith("cuda") and torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+
+    cpu_count = os.cpu_count() or 4
+    if workers > 0:
+        torch.set_num_threads(max(1, min(8, cpu_count // max(1, workers))))
 
 # ── Dataset ───────────────────────────────────────────────────────────────────
 
@@ -133,6 +147,7 @@ def collate(records: list[dict]):
 def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
           device: str = "cpu", ckpt: str | None = None, workers: int = 4,
           log_every: int = 500, amp: bool = True):
+    configure_torch_runtime(device=device, workers=workers)
 
     model = MarjapussiNet().to(device)
     print(f"Model: {model.param_count():,} params  Device: {device}")

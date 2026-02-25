@@ -16,6 +16,21 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.python-version
+
+# Python packaging/build artifacts
+build/
+dist/
+site/
+*.egg
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
 
 # ML/training artifacts
 ml/checkpoints/
@@ -28,6 +43,7 @@ ml/runs/
 # Local benchmark/debug dumps
 *.ndjson
 tmp_bench*.ndjson
+*.log
 
 # OS noise
 .DS_Store

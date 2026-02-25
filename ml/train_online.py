@@ -50,6 +50,22 @@ from train.pool import BatchInferenceServer, EnvPool
 from train.loss import train_step
 
 
+def configure_torch_runtime(device: str, workers: int) -> None:
+    """Apply safe runtime settings for better training throughput."""
+    torch.set_float32_matmul_precision("high")
+
+    if device.startswith("cuda") and torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+
+    # Reduce CPU over-subscription when many game workers are active.
+    cpu_count = os.cpu_count() or 4
+    if workers > 1:
+        per_worker_threads = max(1, cpu_count // workers)
+        torch.set_num_threads(max(1, min(4, per_worker_threads)))
+
+
 def _is_bidding_action(legal: list[dict]) -> bool:
     return bool(legal and legal[0].get("action_token") in (41, 42))
 
@@ -400,6 +416,7 @@ def train_online(
     eval_every: int     = 10,
     ppo_epochs: int     = 3,
 ):
+    configure_torch_runtime(device=device, workers=workers)
     use_amp = device.startswith("cuda")
     model   = MarjapussiNet().to(device)
     scaler  = GradScaler("cuda", enabled=use_amp)

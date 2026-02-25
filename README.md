@@ -40,6 +40,12 @@ Current utility binaries include:
 3. `ml_server`: JSON interface for the ML pipeline.
 4. `ml_generate`: generate training datasets from simulated games.
 
+Optimized local ML setup (Git Bash):
+
+1. `just setup-ml`
+2. `just ui`
+3. `just train-65k`
+
 ## License
 
 This project is licensed under the GPL-3.0 License. See [LICENSE](LICENSE).

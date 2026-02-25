@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marjapussi-ml-tools"
+version = "0.1.0"
+description = "Python tooling for Marjapussi ML training and UI."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+    "numpy",
+    "aiohttp",
+    "websockets",
+]
+
+[tool.setuptools]
+packages = []
+py-modules = []
