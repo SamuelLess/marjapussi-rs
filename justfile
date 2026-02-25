@@ -27,6 +27,7 @@ install-ml-deps: ensure-venv
     @echo "Preparing Python environment using: {{python}}"
     {{python}} -m pip install --upgrade pip
     {{python}} -m pip install -r requirements.txt -r ml/requirements.txt
+    {{python}} ml/install_torch.py
 
 # Create venv, install deps, and build optimized Rust backend for ML.
 setup-ml: install-ml-deps build-ml-server-release

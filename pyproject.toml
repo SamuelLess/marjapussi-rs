@@ -9,7 +9,6 @@ description = "Python tooling for Marjapussi ML training and UI."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "torch",
     "numpy",
     "aiohttp",
     "websockets",

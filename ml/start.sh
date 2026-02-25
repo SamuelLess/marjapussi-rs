@@ -32,6 +32,7 @@ echo ""
 echo "=== 2. Installing Python dependencies ==="
 "$VPY" -m pip install --upgrade pip
 "$VPY" -m pip install -q -r "$ROOT/requirements.txt" -r "$ML/requirements.txt"
+"$VPY" "$ML/install_torch.py"
 
 echo ""
 echo "=== 3. Model smoke test ==="
