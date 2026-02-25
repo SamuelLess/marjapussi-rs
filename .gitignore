@@ -1,3 +1,31 @@
 /target
 .idea
+.vscode/
+
+# Python virtual environments
 .venv/
+venv/
+env/
+
+# Python bytecode and caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ML/training artifacts
+ml/checkpoints/
+ml/runs/
+*.pt
+*.onnx
+
+# Local benchmark/debug dumps
+*.ndjson
+tmp_bench*.ndjson
+
+# OS noise
+.DS_Store
+Thumbs.db
