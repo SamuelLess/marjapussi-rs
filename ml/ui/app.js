@@ -44,6 +44,9 @@ let allHands = {};  // from debug_state
 let dbgTricks = [];
 let dbgConfirmed = [];
 let dbgPossible = [];
+let dbgPredHands = {};
+let dbgPredCardProbs = [];
+let dbgPredImpossibleMass = {};
 
 // Render-diff state (prevents unnecessary DOM churn)
 const prevHand = ['', '', '', ''];  // per seat: sorted card-idx CSV
@@ -76,6 +79,9 @@ function connect() {
         dbgTricks = m.tricks || [];
         dbgConfirmed = m.confirmed_bitmasks || [];
         dbgPossible = m.possible_bitmasks || [];
+        dbgPredHands = m.predicted_hands || {};
+        dbgPredCardProbs = m.predicted_card_probs || [];
+        dbgPredImpossibleMass = m.predicted_impossible_mass || {};
         renderDebugPanel(gs?.obs);
         render(); // update table face-up cards
         break;
@@ -899,6 +905,33 @@ function renderDebugPanel(obs) {
   }
 
   // ── Section 2: Completed tricks in order ──
+  // Hidden-state prediction from the model (relative opponents)
+  if (Object.keys(dbgPredHands).length) {
+    const predTitle = mk('div', 'dbg-section-title', 'KI-Hand-Prognose');
+    p.appendChild(predTitle);
+
+    for (let s = 1; s < 4; s++) {
+      const pred = dbgPredHands[String(s)] || dbgPredHands[s] || [];
+      const possible = dbgPossible[s - 1] || [];
+      const probsSeat = dbgPredCardProbs[s - 1] || [];
+      const imp = Number(dbgPredImpossibleMass[String(s)] ?? dbgPredImpossibleMass[s] ?? 0);
+
+      const row = mk('div', 'dbg-trick-row');
+      row.appendChild(mk('span', 'dbg-trick-lbl', `${PNAMES[s]} | ImpossibleMass=${imp.toFixed(3)}`));
+
+      pred.forEach(cardIdx => {
+        const card = mkCard(cardIdx, '', false);
+        const isPossible = !!possible[cardIdx];
+        card.style.boxShadow = isPossible ? '0 0 0 2px #22c55e' : '0 0 0 2px #f87171';
+        const pr = probsSeat[cardIdx];
+        if (pr != null) card.title += ` | p=${(pr * 100).toFixed(1)}%`;
+        row.appendChild(card);
+      });
+
+      p.appendChild(row);
+    }
+  }
+
   const tricks = dbgTricks.length ? dbgTricks : (gs?.info?.tricks || []);
   if (tricks.length) {
     const tTitle = mk('div', 'dbg-section-title', `🏅 Gespielte Stiche (${tricks.length})`);

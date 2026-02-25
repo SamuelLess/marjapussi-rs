@@ -107,6 +107,34 @@ class GameManager:
         result["confirmed_bitmasks"] = self.obs.get("confirmed_bitmasks", [])
         result["possible_bitmasks"]  = self.obs.get("possible_bitmasks", [])
         result["event_tokens"]       = self.obs.get("event_tokens", [])
+
+        # Hidden-state predictions (relative opponents: left, partner, right).
+        if TORCH_OK and self.model is not None:
+            try:
+                tensors = obs_to_tensors(self.obs)
+                with torch.no_grad():
+                    _, card_logits, _, _ = self.model(tensors)
+                probs = torch.sigmoid(card_logits[0]).tolist()  # [3][36]
+                cards_remaining = self.obs.get("cards_remaining", [0, 0, 0, 0])
+                possible = self.obs.get("possible_bitmasks", [[False] * 36 for _ in range(3)])
+
+                predicted_hands = {}
+                impossible_mass = {}
+                for rel_opp in range(3):
+                    want = int(cards_remaining[rel_opp + 1]) if (rel_opp + 1) < len(cards_remaining) else 0
+                    want = max(0, min(9, want))
+                    row = probs[rel_opp]
+                    ranked = sorted(range(36), key=lambda i: row[i], reverse=True)
+                    predicted_hands[str(rel_opp + 1)] = ranked[:want]
+
+                    imp_vals = [row[i] for i in range(36) if not bool(possible[rel_opp][i])]
+                    impossible_mass[str(rel_opp + 1)] = (sum(imp_vals) / len(imp_vals)) if imp_vals else 0.0
+
+                result["predicted_hands"] = predicted_hands
+                result["predicted_card_probs"] = probs
+                result["predicted_impossible_mass"] = impossible_mass
+            except Exception as e:
+                result["prediction_error"] = str(e)
         return result
 
     def ai_step(self):

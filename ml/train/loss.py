@@ -3,10 +3,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.amp import autocast
 
-def train_step(model, opt, scaler, batch, use_amp: bool, train_phase: str = "trick") -> dict:
+def train_step(
+    model,
+    opt,
+    scaler,
+    batch,
+    use_amp: bool,
+    train_phase: str = "trick",
+    hidden_loss_weight: float = 0.3,
+    impossible_penalty_weight: float = 2.0,
+) -> dict:
     model.train()
     with autocast(device_type='cuda', enabled=use_amp):
-        logits, _, pts_pred, value_pred = model({
+        logits, card_logits, pts_pred, value_pred = model({
             "obs_a":        batch["obs_a"],
             "token_ids":    batch["token_ids"],
             "token_mask":   batch["token_mask"],
@@ -50,6 +59,49 @@ def train_step(model, opt, scaler, batch, use_amp: bool, train_phase: str = "tri
         
         # Points Prediction Loss
         pts_loss = F.mse_loss(pts_pred, batch["pts_target"]) * 0.3
+
+        # Hidden-state auxiliary loss:
+        # - Positive supervision for cards that are truly in opponent hands.
+        # - Extra penalty for cards that are symbolically impossible.
+        # - No penalty on uncertain negatives (possible-but-not-true cards).
+        hidden_target = batch.get("hidden_target")
+        hidden_possible = batch.get("hidden_possible")
+        hidden_loss = torch.tensor(0.0, device=logits.device)
+        hidden_pos_acc = torch.tensor(0.0, device=logits.device)
+        impossible_mass = torch.tensor(0.0, device=logits.device)
+        if hidden_target is not None and hidden_possible is not None:
+            hidden_target = hidden_target.float()
+            hidden_possible = hidden_possible.float()
+            pos_mask = hidden_target > 0.5
+            impossible_mask = (hidden_possible < 0.5) & (~pos_mask)
+
+            bce_all = F.binary_cross_entropy_with_logits(
+                card_logits, hidden_target, reduction="none"
+            )
+
+            pos_count = pos_mask.float().sum()
+            if pos_count > 0:
+                pos_loss = (bce_all * pos_mask.float()).sum() / pos_count
+                hidden_probs = torch.sigmoid(card_logits)
+                hidden_pos_acc = (hidden_probs[pos_mask] > 0.5).float().mean()
+            else:
+                pos_loss = torch.tensor(0.0, device=logits.device)
+
+            impossible_count = impossible_mask.float().sum()
+            if impossible_count > 0:
+                impossible_loss = (
+                    F.binary_cross_entropy_with_logits(
+                        card_logits,
+                        torch.zeros_like(card_logits),
+                        reduction="none",
+                    ) * impossible_mask.float()
+                ).sum() / impossible_count
+                hidden_probs = torch.sigmoid(card_logits)
+                impossible_mass = hidden_probs[impossible_mask].mean()
+            else:
+                impossible_loss = torch.tensor(0.0, device=logits.device)
+
+            hidden_loss = pos_loss + impossible_penalty_weight * impossible_loss
         
         # Total Base Loss
         
@@ -62,7 +114,13 @@ def train_step(model, opt, scaler, batch, use_amp: bool, train_phase: str = "tri
             # Zero out policy loss for bidding actions, let it just learn the Value
             policy_loss = (torch.min(surr1, surr2) * (~is_bid).float()).mean() * -1.0
             
-        loss = policy_loss + 0.5 * value_loss + entropy_loss + pts_loss
+        loss = (
+            policy_loss
+            + 0.5 * value_loss
+            + entropy_loss
+            + pts_loss
+            + hidden_loss_weight * hidden_loss
+        )
         
         # bid_value is at index 32, normalized as (val - 120)/300.0
         # point_pred my_pts is normalized as pts / 420.0
@@ -87,6 +145,9 @@ def train_step(model, opt, scaler, batch, use_amp: bool, train_phase: str = "tri
             "value": float('nan'),
             "entropy": float('nan'),
             "pts": float('nan'),
+            "hidden": float('nan'),
+            "hidden_pos_acc": float('nan'),
+            "impossible_mass": float('nan'),
             "approx_kl": float('nan'),
             "clipfrac": float('nan'),
         }
@@ -115,6 +176,9 @@ def train_step(model, opt, scaler, batch, use_amp: bool, train_phase: str = "tri
         "value": value_loss.item() if grads_valid else float('nan'),
         "entropy": entropy.item() if grads_valid else float('nan'),
         "pts": pts_loss.item() if grads_valid else float('nan'),
+        "hidden": hidden_loss.item() if grads_valid else float('nan'),
+        "hidden_pos_acc": hidden_pos_acc.item() if grads_valid else float('nan'),
+        "impossible_mass": impossible_mass.item() if grads_valid else float('nan'),
         "approx_kl": approx_kl.item() if grads_valid else float('nan'),
         "clipfrac": clipfrac.item() if grads_valid else float('nan'),
     }

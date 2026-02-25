@@ -363,6 +363,13 @@ def collate(transitions: list[Transition], device: str):
         [min(t.action_idx, transitions[i].obs["action_feats"].shape[1]-1)
          for i, t in enumerate(transitions)], dtype=torch.long)
 
+    hidden_target = torch.cat(
+        [t.obs["hidden_target"] for t in transitions], 0
+    ).to(device, non_blocking=True)
+    hidden_possible = torch.cat(
+        [t.obs["hidden_possible"] for t in transitions], 0
+    ).to(device, non_blocking=True)
+
     return {
         "obs_a":       obs_a,
         "token_ids":   tok.to(device, non_blocking=True),
@@ -374,6 +381,8 @@ def collate(transitions: list[Transition], device: str):
         "value":       torch.tensor([t.value for t in transitions]).to(device, non_blocking=True),
         "log_prob_old":torch.tensor([t.log_prob for t in transitions]).to(device, non_blocking=True),
         "pts_target":  torch.tensor([[t.pts_my, t.pts_opp] for t in transitions]).to(device, non_blocking=True),
+        "hidden_target": hidden_target,
+        "hidden_possible": hidden_possible,
     }
 
 
@@ -441,6 +450,8 @@ def train_online(
     adv_query_mode: str = "target",
     adv_non_target_prob: float = 0.0,
     max_adv_calls_per_episode: int = 1,
+    hidden_loss_weight: float = 0.3,
+    impossible_penalty_weight: float = 2.0,
 ):
     configure_torch_runtime(device=device, workers=workers)
     use_amp = device.startswith("cuda")
@@ -466,6 +477,10 @@ def train_online(
     Log.info(
         f"Adv branching: mode={adv_query_mode}, non_target_prob={adv_non_target_prob:.2f}, "
         f"max_calls_per_episode={max_adv_calls_per_episode}"
+    )
+    Log.info(
+        f"Hidden-state aux loss: weight={hidden_loss_weight:.2f}, "
+        f"impossible_penalty={impossible_penalty_weight:.2f}"
     )
     Log.info(f"Params: {model.param_count():,}\n")
 
@@ -582,7 +597,16 @@ def train_online(
                 chunk = all_transitions[start:start + train_batch]
                 batch = collate(chunk, device)
                 if batch is None: continue
-                losses = train_step(model, opt, scaler, batch, use_amp, train_phase=train_phase)
+                losses = train_step(
+                    model,
+                    opt,
+                    scaler,
+                    batch,
+                    use_amp,
+                    train_phase=train_phase,
+                    hidden_loss_weight=hidden_loss_weight,
+                    impossible_penalty_weight=impossible_penalty_weight,
+                )
                 if not math.isfinite(float(losses.get("total", float("nan")))):
                     invalid_batch_detected = True
                     Log.warn("Stopping optimization early due to non-finite batch loss.")
@@ -649,7 +673,8 @@ def train_online(
         print(f"  - Games:    {games_per_round} ({rate:.1f} games/s)")
         print(f"  - Samples:  {n_trans} transitions")
         print(f"  - OptEpochs:{epoch}")
-        print(f"  - Losses:   Total: {avg_loss.get('total',0):.4f} | Pol: {avg_loss.get('policy',0):.4f} | Val: {avg_loss.get('value',0):.4f} | Ent: {avg_loss.get('entropy',0):.4f} | Pts: {avg_loss.get('pts',0):.4f} | KL: {avg_loss.get('approx_kl',0):.4f} | Clip: {avg_loss.get('clipfrac',0):.3f}")
+        print(f"  - Losses:   Total: {avg_loss.get('total',0):.4f} | Pol: {avg_loss.get('policy',0):.4f} | Val: {avg_loss.get('value',0):.4f} | Ent: {avg_loss.get('entropy',0):.4f} | Pts: {avg_loss.get('pts',0):.4f} | Hidden: {avg_loss.get('hidden',0):.4f} | KL: {avg_loss.get('approx_kl',0):.4f} | Clip: {avg_loss.get('clipfrac',0):.3f}")
+        print(f"  - HiddenAux: PosAcc: {avg_loss.get('hidden_pos_acc',0):.3f} | ImpossibleMass: {avg_loss.get('impossible_mass',0):.3f}")
         print(f"  - Time:     Sim: {gen_time:.1f}s | Opt: {train_time:.1f}s")
 
         log_entry = {"round": rnd+1, "stage": stage, "n_games": games_per_round,
@@ -733,6 +758,10 @@ if __name__ == "__main__":
                    help="Probability to branch on non-target decisions (used by stochastic modes)")
     p.add_argument("--max-adv-calls-per-episode", type=int, default=1,
                    help="Hard cap of advantage-query calls per episode")
+    p.add_argument("--hidden-loss-weight", type=float, default=0.3,
+                   help="Weight of hidden-hand auxiliary loss in total loss")
+    p.add_argument("--impossible-penalty-weight", type=float, default=2.0,
+                   help="Penalty multiplier for predicting cards that are impossible by symbolic constraints")
     args = p.parse_args()
 
     if torch.cuda.is_available():
@@ -761,4 +790,6 @@ if __name__ == "__main__":
         adv_query_mode=args.adv_query_mode,
         adv_non_target_prob=args.adv_non_target_prob,
         max_adv_calls_per_episode=args.max_adv_calls_per_episode,
+        hidden_loss_weight=args.hidden_loss_weight,
+        impossible_penalty_weight=args.impossible_penalty_weight,
     )

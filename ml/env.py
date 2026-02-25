@@ -242,12 +242,29 @@ def obs_to_tensors(obs: dict) -> dict:
     # Legal action features [1, A, 51]
     action_feats, action_mask = encode_legal_actions(obs['legal_actions'])
 
+    # Hidden-hand supervision targets (relative opponents: left, partner, right).
+    hidden_target = torch.zeros((1, 3, NUM_CARDS), dtype=torch.float32)
+    all_hands = obs.get('all_hands', [])
+    for rel_opp in range(3):
+        seat_idx = rel_opp + 1  # 0 is POV, 1..3 are opponents in relative seating
+        if seat_idx < len(all_hands):
+            for card_idx in all_hands[seat_idx]:
+                if 0 <= card_idx < NUM_CARDS:
+                    hidden_target[0, rel_opp, card_idx] = 1.0
+
+    hidden_possible = torch.tensor(
+        obs.get('possible_bitmasks', [[False] * NUM_CARDS for _ in range(3)]),
+        dtype=torch.float32
+    ).unsqueeze(0)
+
     return {
         'obs_a': obs_a,
         'token_ids': token_ids,
         'token_mask': token_mask,
         'action_feats': action_feats,
         'action_mask': action_mask,
+        'hidden_target': hidden_target,
+        'hidden_possible': hidden_possible,
     }
 
 
