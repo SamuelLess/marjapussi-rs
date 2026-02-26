@@ -188,6 +188,7 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
           device: str = "cpu", ckpt: str | None = None, workers: int = 4,
           log_every: int = 500, amp: bool = True, max_steps: int = 0,
           bid_weight: float = 1.0, pass_weight: float = 1.0,
+          outcome_weight_alpha: float = 0.0,
           model_family: str = "legacy", model_config: str | None = None,
           strict_param_budget: int | None = None,
           lr_schedule: str = "plateau", lr_min: float = 1e-5,
@@ -210,6 +211,9 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
     )
     Log.info(
         f"Phase/action emphasis: bid_weight={bid_weight:.2f}, pass_weight={pass_weight:.2f}"
+    )
+    Log.info(
+        f"Supervised target mode: pure BC + outcome_weight_alpha={outcome_weight_alpha:.2f}"
     )
     Log.info(f"Model params: {model.param_count():,}")
     if ckpt and Path(ckpt).exists():
@@ -316,8 +320,12 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
                 # Behavior cloning (cross-entropy) weighted by advantage
                 log_p   = F.log_softmax(logits, dim=-1)
                 chosen_lp = log_p.gather(1, ai.unsqueeze(1)).squeeze(1)
-                # Advantage-weighted BC: good moves get stronger gradient
-                weights = F.relu(adv) + 0.1   # always >= 0.1 to learn from all moves
+                # Supervised imitation first: default to uniform weights.
+                # Optional mild outcome weighting can be enabled via outcome_weight_alpha.
+                weights = torch.ones_like(adv)
+                if outcome_weight_alpha > 0:
+                    weights = weights + outcome_weight_alpha * torch.tanh(adv)
+                    weights = torch.clamp(weights, min=0.25)
                 phase_boost = batch_data.get("phase_boost")
                 if phase_boost is not None:
                     weights = weights * phase_boost.to(device, non_blocking=True)
@@ -429,6 +437,8 @@ if __name__ == "__main__":
                    help="Extra supervised emphasis multiplier for bidding actions")
     p.add_argument("--pass-weight", type=float, default=1.0,
                    help="Extra supervised emphasis multiplier for passing/pick-pass-card actions")
+    p.add_argument("--outcome-weight-alpha", type=float, default=0.0,
+                   help="Optional outcome-based weighting in BC (0.0 = pure imitation)")
     p.add_argument("--lr-schedule", choices=["plateau", "cosine", "constant"], default="plateau",
                    help="Learning-rate control strategy")
     p.add_argument("--lr-min", type=float, default=1e-5,
@@ -462,6 +472,7 @@ if __name__ == "__main__":
           workers=args.workers, log_every=args.log_every,
           amp=not args.no_amp, max_steps=args.max_steps,
           bid_weight=args.bid_weight, pass_weight=args.pass_weight,
+          outcome_weight_alpha=args.outcome_weight_alpha,
           lr_schedule=args.lr_schedule, lr_min=args.lr_min,
           lr_warmup_steps=args.lr_warmup_steps,
           lr_plateau_patience=args.lr_plateau_patience,

@@ -60,34 +60,40 @@ build-ml-server-ui-runtime:
 
 # Ensure release ml_server exists; avoid rebuild if already present (helps parallel runs on Windows).
 ensure-ml-server-release:
-    @if [ ! -f "{{ml_server_bin}}" ]; then \
-        echo "Release ml_server missing, building once..."; \
+    @if [ ! -f "{{ml_server_bin}}" ] || [ -n "$(find src Cargo.toml Cargo.lock -type f -newer "{{ml_server_bin}}" 2>/dev/null | head -n 1)" ]; then \
+        echo "Building fresh release ml_server..."; \
         RUSTFLAGS="-C target-cpu=native" cargo build --release --bin ml_server; \
     else \
-        echo "Using existing release ml_server: {{ml_server_bin}}"; \
+        echo "Using up-to-date release ml_server: {{ml_server_bin}}"; \
     fi
 
 # Ensure isolated UI runtime ml_server exists (never touches target/release/ml_server).
 ensure-ml-server-ui-runtime:
-    @if [ ! -f "{{ui_ml_server_bin}}" ]; then \
-        echo "Isolated UI ml_server missing, building once in target/ui_runtime..."; \
+    @if [ ! -f "{{ui_ml_server_bin}}" ] || [ -n "$(find src Cargo.toml Cargo.lock -type f -newer "{{ui_ml_server_bin}}" 2>/dev/null | head -n 1)" ]; then \
+        echo "Building fresh isolated UI ml_server in target/ui_runtime..."; \
         CARGO_TARGET_DIR="target/ui_runtime" RUSTFLAGS="-C target-cpu=native" cargo build --release --bin ml_server; \
     else \
-        echo "Using isolated UI ml_server: {{ui_ml_server_bin}}"; \
+        echo "Using up-to-date isolated UI ml_server: {{ui_ml_server_bin}}"; \
     fi
 
 # Ensure release ml_convert_legacy exists; avoid rebuild if already present.
 ensure-ml-convert-release:
-    @if [ ! -f "{{ml_convert_bin}}" ]; then \
-        echo "Release ml_convert_legacy missing, building once..."; \
+    @if [ ! -f "{{ml_convert_bin}}" ] || [ -n "$(find src Cargo.toml Cargo.lock -type f -newer "{{ml_convert_bin}}" 2>/dev/null | head -n 1)" ]; then \
+        echo "Building fresh release ml_convert_legacy..."; \
         RUSTFLAGS="-C target-cpu=native" cargo build --release --bin ml_convert_legacy; \
     else \
-        echo "Using existing release ml_convert_legacy: {{ml_convert_bin}}"; \
+        echo "Using up-to-date release ml_convert_legacy: {{ml_convert_bin}}"; \
     fi
 
 # Convert legacy human games into decision-point NDJSON.
 build-human-dataset input="ml/dataset/games.ndjson" output="ml/data/human_dataset.ndjson": ensure-ml-server-release ensure-ml-convert-release
     {{ml_convert_bin}} --input {{input}} --output {{output}}
+    @{{python}} -c "import json,collections,sys; p='{{output}}'; c=collections.Counter(); n=0; \
+f=open(p,'r',encoding='utf-8'); \
+[c.update([ (lambda r: (r['obs'].get('legal_actions',[{}])[min(max(0,int(r.get('action_taken',0))), max(0,len(r['obs'].get('legal_actions',[]))-1))].get('action_token') if r.get('obs',{}).get('legal_actions') else None))(json.loads(line)) ]) or (n:=n+1) for line in f if line.strip()]; \
+f.close(); \
+print(f'Dataset rows={n} pass_pick(token52)={c.get(52,0)} direct_pass(token43)={c.get(43,0)}'); \
+sys.exit(0 if c.get(52,0)>0 else 2)"
 
 # Supervised pretraining on converted human data.
 pretrain-human data="ml/data/human_dataset.ndjson" epochs="8" max_steps="2048" checkpoints_dir="ml/checkpoints":
