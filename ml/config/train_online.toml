@@ -1,0 +1,43 @@
+# Online training defaults for ml/train_online.py
+# CLI flags override these values.
+
+# --- Core loop ---
+rounds = 100
+games_per_round = 200
+workers = 8
+mc_rollouts = 4
+train_batch = 192
+lr = 0.0003
+start_round = 0
+eval_every = 10
+
+# --- PPO / optimization control ---
+ppo_epochs = 3
+min_ppo_epochs = 2
+max_ppo_epochs = 5
+balance_opt_time = false
+target_opt_sim_ratio = 1.0
+target_kl = 0.03
+max_clipfrac = 0.40
+min_policy_improve = 0.001
+opt_early_stop_patience = 1
+
+# --- Counterfactual branching ---
+adv_query_mode = "target"
+adv_non_target_prob = 0.0
+max_adv_calls_per_episode = 1
+
+# --- Auxiliary and imitation losses ---
+hidden_loss_weight = 0.3
+impossible_penalty_weight = 2.0
+forced_imitation_weight = 0.5
+forced_imitation_decay_rounds = 128
+
+# --- Reward semantics ---
+points_normalizer = 420.0
+passgame_base_reward = 0.27380952380952384
+step_delta_scale = 0.002380952380952381
+
+# --- Optional rolling checkpoint path ---
+# Example: "human_first_65k.pt"
+# named_checkpoint = "latest_named.pt"

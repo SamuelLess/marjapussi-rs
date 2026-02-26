@@ -17,6 +17,7 @@ Recommended starting point:
 """
 
 import argparse, collections, json, math, os, random, sys, threading, time, warnings
+import tomllib
 import ctypes
 
 # Prevent Windows from going to sleep during multi-day runs
@@ -42,6 +43,7 @@ from env import MarjapussiEnv, obs_to_tensors
 
 CKPT_DIR = Path(__file__).parent / "checkpoints"
 RUNS_DIR  = Path(__file__).parent / "runs"
+DEFAULT_CONFIG_PATH = Path(__file__).parent / "config" / "train_online.toml"
 CKPT_DIR.mkdir(exist_ok=True)
 RUNS_DIR.mkdir(exist_ok=True)
 
@@ -65,6 +67,35 @@ def configure_torch_runtime(device: str, workers: int) -> None:
     if workers > 1:
         per_worker_threads = max(1, cpu_count // workers)
         torch.set_num_threads(max(1, min(4, per_worker_threads)))
+
+
+def _load_config_file(path: str | Path) -> dict:
+    cfg_path = Path(path)
+    if not cfg_path.exists():
+        return {}
+    with cfg_path.open("rb") as f:
+        data = tomllib.load(f)
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def _apply_config_defaults(args: argparse.Namespace, parser: argparse.ArgumentParser) -> argparse.Namespace:
+    cfg = _load_config_file(args.config)
+    if not cfg:
+        return args
+
+    defaults = {
+        action.dest: action.default
+        for action in parser._actions
+        if action.dest not in {"help"}
+    }
+    for key, value in cfg.items():
+        if key not in defaults:
+            continue
+        if getattr(args, key) == defaults[key]:
+            setattr(args, key, value)
+    return args
 
 
 def _is_bidding_action(legal: list[dict]) -> bool:
@@ -770,6 +801,8 @@ if __name__ == "__main__":
                    help="Rounds over which forced-action imitation weight decays")
     p.add_argument("--named-checkpoint", default=None,
                    help="Optional checkpoint filename/path to update every round")
+    p.add_argument("--config", default=str(DEFAULT_CONFIG_PATH),
+                   help="TOML file for human-readable training defaults")
     p.add_argument("--points-normalizer", type=float, default=420.0,
                    help="Point normalization constant used by reward calculations")
     p.add_argument("--passgame-base-reward", type=float, default=(115.0 / 420.0),
@@ -777,6 +810,7 @@ if __name__ == "__main__":
     p.add_argument("--step-delta-scale", type=float, default=(1.0 / 420.0),
                    help="Scale for dense per-step point-delta reward")
     args = p.parse_args()
+    args = _apply_config_defaults(args, p)
 
     if torch.cuda.is_available():
         print(f"GPU: {torch.cuda.get_device_name(0)}")

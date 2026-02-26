@@ -112,6 +112,7 @@ The training loop must expose parameters needed to compare strategies:
 6. Pretraining budget control (for example fixed `max_steps` or ratio-based policy).
 
 The same fixed evaluation suite must be used across strategy runs to compare outcomes.
+Human-readable default knobs should live in a versioned config file (`ml/config/train_online.toml`).
 
 ## 8.1 Reference Profiles
 
