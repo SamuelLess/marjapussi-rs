@@ -13,18 +13,30 @@ Usage:
   python ml/train_from_dataset.py --data ml/data/dataset.ndjson --device cuda --batch 1024 --workers 4
 """
 
-import argparse, json, math, os, random, sys, time
+import argparse, json, math, os, random, sys, time, warnings
 from pathlib import Path
 from torch.utils.data import IterableDataset, DataLoader
 import torch, torch.nn as nn, torch.nn.functional as F
 import torch.optim as optim
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 
 sys.path.insert(0, str(Path(__file__).parent))
 from model import ACTION_FEAT_DIM, MarjapussiNet
 from env import obs_to_tensors
+from train.utils import Log
+
+warnings.filterwarnings("ignore", message=".*expandable_segments not supported on this platform.*")
 
 DEFAULT_CKPT_DIR = Path(__file__).parent / "checkpoints"
+
+
+def _format_eta(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    if h > 0:
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"
 
 
 def configure_torch_runtime(device: str, workers: int) -> None:
@@ -152,27 +164,34 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     model = MarjapussiNet().to(device)
-    print(f"Model: {model.param_count():,} params  Device: {device}")
+    Log.success(
+        f"Supervised pretraining | epochs={epochs} | batch={batch} | workers={workers} | device={device}"
+    )
+    Log.info(f"Model params: {model.param_count():,}")
     if ckpt and Path(ckpt).exists():
-        model.load_state_dict(torch.load(ckpt, map_location=device)); print(f"Loaded: {ckpt}")
+        model.load_state_dict(torch.load(ckpt, map_location=device))
+        Log.info(f"Loaded checkpoint: {ckpt}")
 
     use_amp = amp and device.startswith("cuda")
-    scaler  = GradScaler(enabled=use_amp)
+    scaler  = GradScaler("cuda", enabled=use_amp)
     opt     = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
 
     # Count lines for scheduler estimate
     try:
-        n_lines = sum(1 for _ in open(data_path))
-        steps_per_epoch = n_lines // batch
-        print(f"Dataset: ~{n_lines:,} records -> ~{steps_per_epoch:,} steps/epoch")
-    except:
-        steps_per_epoch = 100_000
+        with open(data_path, "r", encoding="utf-8") as f:
+            n_lines = sum(1 for _ in f)
+        steps_per_epoch = max(1, n_lines // max(1, batch))
+        Log.info(f"Dataset: ~{n_lines:,} records -> ~{steps_per_epoch:,} steps/epoch")
+    except Exception:
+        steps_per_epoch = max(1, 100_000 // max(1, batch))
+        Log.warn("Could not count dataset lines; using fallback scheduler horizon.")
 
     sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs * steps_per_epoch)
+    progress_interval = max(1, min(log_every, max(1, steps_per_epoch // 8)))
 
     global_step = 0
     for epoch in range(epochs):
-        print(f"\n== Epoch {epoch+1}/{epochs} ==")
+        Log.phase(f"Epoch {epoch+1}/{epochs}: Pretraining")
         ds = NdJsonDataset(data_path, shuffle_buf=min(100_000, batch * 200), epochs=1)
         loader = DataLoader(ds, batch_size=batch, collate_fn=collate,
                             num_workers=workers, worker_init_fn=worker_init,
@@ -200,7 +219,7 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
             adv     = batch_data["advantage"].to(device, non_blocking=True)
             pts_tgt = batch_data["pts_target"].to(device, non_blocking=True)
 
-            with autocast(enabled=use_amp):
+            with autocast("cuda", enabled=use_amp):
                 logits, _, pts_pred, _ = model({"obs_a": obs_a, "token_ids": tok,
                     "token_mask": tok_mask, "action_feats": af, "action_mask": am})
 
@@ -227,27 +246,48 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
             sum_loss += loss.item(); sum_bc += bc_loss.item(); sum_pts += pts_loss.item()
             step += 1
 
-            if step % log_every == 0:
+            if step % progress_interval == 0:
                 elapsed = time.time() - t0
-                rate = step * batch / elapsed
-                print(f"  [{step:6,}] loss={sum_loss/step:.4f}  bc={sum_bc/step:.4f}"
-                      f"  pts={sum_pts/step:.4f}  {rate:,.0f} samples/s"
-                      f"  lr={sched.get_last_lr()[0]:.2e}")
+                steps_per_sec = step / max(elapsed, 1e-6)
+                sample_rate = steps_per_sec * batch
+                eta = (max(0, steps_per_epoch - step)) / max(steps_per_sec, 1e-6)
+                Log.opt(
+                    f"Epoch {epoch+1}/{epochs} | "
+                    f"Step {step}/{steps_per_epoch} | "
+                    f"Loss: {sum_loss/step:.4f} | "
+                    f"BC: {sum_bc/step:.4f} | "
+                    f"Pts: {sum_pts/step:.4f} | "
+                    f"{sample_rate:,.0f} samples/s | "
+                    f"ETA: {_format_eta(eta)} | "
+                    f"LR: {sched.get_last_lr()[0]:.2e}",
+                    end=""
+                )
 
             if max_steps > 0 and global_step >= max_steps:
-                print(f"  -> Reached max_steps={max_steps}, stopping pretraining early.")
+                Log.warn(f"Reached max_steps={max_steps}, stopping pretraining early.")
                 stop_early = True
                 break
 
+        if step > 0:
+            print()
+        epoch_secs = time.time() - t0
+        avg_loss = sum_loss / max(1, step)
+        avg_bc = sum_bc / max(1, step)
+        avg_pts = sum_pts / max(1, step)
         ckpt_path = ckpt_dir / f"epoch_{epoch+1}.pt"
         torch.save(model.state_dict(), ckpt_path)
         torch.save(model.state_dict(), ckpt_dir / "latest.pt")
-        print(f"  -> Saved {ckpt_path}")
+        Log.success(f"Epoch {epoch+1} Summary:")
+        print(f"  - Steps:    {step}")
+        print(f"  - Losses:   Total: {avg_loss:.4f} | BC: {avg_bc:.4f} | Pts: {avg_pts:.4f}")
+        print(f"  - Time:     {epoch_secs:.1f}s")
+        print(f"  - Saved:    {ckpt_path}")
         if stop_early:
             break
 
-    print(f"\nTraining done. Checkpoint: {ckpt_dir / 'latest.pt'}")
-    print(f"Next: python ml/train.py --checkpoint {ckpt_dir / 'latest.pt'}  (self-play fine-tune)")
+    Log.success("Pretraining complete.")
+    Log.info(f"Checkpoint: {ckpt_dir / 'latest.pt'}")
+    Log.info(f"Next: python ml/train.py --checkpoint {ckpt_dir / 'latest.pt'}")
 
 
 if __name__ == "__main__":
@@ -267,9 +307,12 @@ if __name__ == "__main__":
                    help="Directory for pretraining checkpoints")
     args = p.parse_args()
 
-    print(f"CUDA available: {torch.cuda.is_available()}")
+    Log.info(f"CUDA available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
-        print(f"GPU: {torch.cuda.get_device_name(0)}  VRAM: {torch.cuda.get_device_properties(0).total_memory//1024**3} GB")
+        Log.info(
+            f"GPU: {torch.cuda.get_device_name(0)}  "
+            f"VRAM: {torch.cuda.get_device_properties(0).total_memory//1024**3} GB"
+        )
 
     train(data_path=args.data, epochs=args.epochs, batch=args.batch,
           lr=args.lr, device=args.device, ckpt=args.checkpoint,

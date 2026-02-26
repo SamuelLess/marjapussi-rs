@@ -185,6 +185,29 @@ fn parse_answer(val: &str) -> Result<ActionType, String> {
     Ok(ActionType::Answer(AnswerType::NoPair))
 }
 
+fn answer_half_suit_from_raw(raw: &str) -> Option<Suit> {
+    let (_, code, val) = split_action(raw).ok()?;
+    if code != "ANSW" {
+        return None;
+    }
+    let suit_char = val
+        .strip_prefix("no")
+        .or_else(|| val.strip_prefix("ou"))
+        .and_then(|s| s.chars().next())?;
+    parse_suit_char(suit_char).ok()
+}
+
+fn is_pair_answer_raw(raw: &str) -> bool {
+    let (_, code, val) = match split_action(raw) {
+        Ok(parts) => parts,
+        Err(_) => return false,
+    };
+    if code != "ANSW" {
+        return false;
+    }
+    val == "nmy" || val.starts_with("my")
+}
+
 fn parse_single_action(raw: &str) -> Result<GameAction, String> {
     let (seat, code, val) = split_action(raw)?;
     let action_type = match code {
@@ -321,18 +344,7 @@ fn build_seeded_game(record: &LegacyGameRecord) -> Result<Game, String> {
 
 fn record_decision(game: &Game, action: &GameAction) -> Result<DecisionPoint, String> {
     let action_idx = find_action_index(game, action).ok_or_else(|| {
-        let legal_preview: Vec<String> = game
-            .legal_actions
-            .iter()
-            .take(8)
-            .map(|a| format!("{:?}", a.action_type))
-            .collect();
-        format!(
-            "action not legal in phase {:?}: {:?}; legal preview: {}",
-            game.state.phase,
-            action,
-            legal_preview.join(" | ")
-        )
+        illegal_action_error(game, action)
     })?;
     let obs = ObservationJson::from(build_observation(game, action.player.clone()));
     Ok(DecisionPoint {
@@ -342,10 +354,26 @@ fn record_decision(game: &Game, action: &GameAction) -> Result<DecisionPoint, St
     })
 }
 
+fn illegal_action_error(game: &Game, action: &GameAction) -> String {
+    let legal_preview: Vec<String> = game
+        .legal_actions
+        .iter()
+        .take(8)
+        .map(|a| format!("{:?}", a.action_type))
+        .collect();
+    format!(
+        "action not legal in phase {:?}: {:?}; legal preview: {}",
+        game.state.phase,
+        action,
+        legal_preview.join(" | ")
+    )
+}
+
 fn replay_legacy_game(record: &LegacyGameRecord) -> Result<Vec<serde_json::Value>, String> {
     let mut game = build_seeded_game(record)?;
     let mut pass_collect: Vec<String> = Vec::new();
     let mut decisions: Vec<DecisionPoint> = Vec::new();
+    let mut skip_next_answer_after_ignored_question = false;
 
     let flush_pass_group = |game: &mut Game, pass_collect: &mut Vec<String>, decisions: &mut Vec<DecisionPoint>| -> Result<(), String> {
         if pass_collect.is_empty() {
@@ -364,11 +392,15 @@ fn replay_legacy_game(record: &LegacyGameRecord) -> Result<Vec<serde_json::Value
         Ok(())
     };
 
-    for raw in &record.actions {
+    for (idx, raw) in record.actions.iter().enumerate() {
         if pass_collect.len() == 4 {
             flush_pass_group(&mut game, &mut pass_collect, &mut decisions)?;
         }
         let (_, code, _) = split_action(raw)?;
+        if skip_next_answer_after_ignored_question && code == "ANSW" {
+            skip_next_answer_after_ignored_question = false;
+            continue;
+        }
         if code == "PASS" || code == "PBCK" {
             pass_collect.push(raw.clone());
             continue;
@@ -380,17 +412,34 @@ fn replay_legacy_game(record: &LegacyGameRecord) -> Result<Vec<serde_json::Value
             if code == "QUES" {
                 let player = PlaceAtTable(seat);
                 let mut candidates: Vec<GameAction> = Vec::new();
-                if let Some(suit_char) = val.strip_prefix("my").and_then(|s| s.chars().next()) {
+                if val == "you" {
+                    if let Some(next_raw) = record.actions.get(idx + 1) {
+                        if let Some(suit) = answer_half_suit_from_raw(next_raw) {
+                            candidates.push(GameAction {
+                                action_type: ActionType::Question(QuestionType::YourHalf(suit)),
+                                player: player.clone(),
+                            });
+                        }
+                    }
+                    candidates.push(GameAction {
+                        action_type: ActionType::Question(QuestionType::Yours),
+                        player: player.clone(),
+                    });
+                } else if let Some(suit_char) = val.strip_prefix("ou").and_then(|s| s.chars().next()) {
                     let suit = parse_suit_char(suit_char)?;
                     candidates.push(GameAction {
                         action_type: ActionType::Question(QuestionType::YourHalf(suit)),
                         player: player.clone(),
                     });
+                    if let Some(next_raw) = record.actions.get(idx + 1) {
+                        if is_pair_answer_raw(next_raw) {
+                            candidates.push(GameAction {
+                                action_type: ActionType::Question(QuestionType::Yours),
+                                player: player.clone(),
+                            });
+                        }
+                    }
                 }
-                candidates.push(GameAction {
-                    action_type: ActionType::Question(QuestionType::Yours),
-                    player,
-                });
                 for candidate in candidates {
                     if find_action_index(&game, &candidate).is_some() {
                         action = candidate;
@@ -401,6 +450,22 @@ fn replay_legacy_game(record: &LegacyGameRecord) -> Result<Vec<serde_json::Value
         }
         if action.action_type == ActionType::NewBid(0) {
             continue;
+        }
+        if find_action_index(&game, &action).is_none() {
+            if code == "QUES" {
+                if let Some(next_raw) = record.actions.get(idx + 1) {
+                    let (_, next_code, _) = split_action(next_raw)?;
+                    skip_next_answer_after_ignored_question = next_code == "ANSW";
+                }
+                continue;
+            }
+            if code == "ANSW" {
+                continue;
+            }
+            if matches!(action.action_type, ActionType::StopBidding) {
+                continue;
+            }
+            return Err(illegal_action_error(&game, &action));
         }
 
         decisions.push(record_decision(&game, &action)?);

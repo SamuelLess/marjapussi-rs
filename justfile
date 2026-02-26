@@ -118,7 +118,7 @@ train-1k-human run_name="human_smoke_1k": setup-ml build-human-dataset
       run_bin="$$run_bin_dir/$$(basename "{{ml_server_bin}}")"; \
       mkdir -p "$$run_ckpt" "$$run_logs" "$$run_bin_dir"; \
       cp -f "{{ml_server_bin}}" "$$run_bin"; \
-      {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 6 --batch 1024 --workers 4 --device cuda --max-steps 1024 --checkpoints-dir "$$run_ckpt"; \
+      PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 6 --batch 256 --workers 2 --device cuda --max-steps 1024 --checkpoints-dir "$$run_ckpt"; \
       cp -f "$$run_ckpt/latest.pt" "$$run_ckpt/$$run_label"_pretrain_final.pt; \
       echo "Saved pretraining final checkpoint: $$run_ckpt/$$run_label"_pretrain_final.pt; \
       ML_SERVER_BIN="$$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {{python}} ml/train_online.py --rounds 32 --games-per-round 32 --workers 8 --mc-rollouts 2 --device cuda --eval-every 8 --checkpoint "$$run_ckpt/$$run_label"_pretrain_final.pt --ppo-epochs 2 --min-ppo-epochs 1 --max-ppo-epochs 3 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.20 --max-adv-calls-per-episode 2 --named-checkpoint "$$run_label"_selfplay_final.pt --checkpoints-dir "$$run_ckpt" --runs-dir "$$run_logs"; \
@@ -178,6 +178,10 @@ resume-train run_name="scratch_65k" checkpoint_name="latest" start_round="10": s
       echo "Artifacts root: $$run_root"
 
 # Build and run the UI server (Ctrl+C kills both Python and the Rust engine)
-ui: setup-ml
-    @echo "Starting UI server (http://localhost:8765)..."
-    ML_SERVER_BIN={{ml_server_bin}} {{python}} ml/ui_server.py
+# Example:
+#   just ui
+#   just ui checkpoint=latest port=8765
+#   just ui checkpoint=my_run_best.pt port=18765
+ui checkpoint="latest" port="8765": setup-ml
+    @echo "Starting UI server (http://localhost:{{port}}) with checkpoint={{checkpoint}} ..."
+    ML_SERVER_BIN={{ml_server_bin}} {{python}} ml/ui_server.py --port {{port}} --checkpoint {{checkpoint}}
