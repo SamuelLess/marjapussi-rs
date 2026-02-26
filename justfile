@@ -57,10 +57,15 @@ train-65k-scratch: train-65k
 
 # Human-first training profile:
 # 1) convert legacy logs, 2) supervised warm-start (~50% upfront step budget), 3) RL fine-tune.
-train-65k-human: setup-ml build-human-dataset
+train-65k-human run_name="human_first_65k": setup-ml build-human-dataset
     @echo "Running human pretraining warm-start (max_steps=512) before RL fine-tune..."
     {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 4 --batch 1024 --workers 4 --device cuda --max-steps 512
-    ML_SERVER_BIN={{ml_server_bin}} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {{python}} ml/train_online.py --rounds 512 --games-per-round 128 --workers 32 --mc-rollouts 4 --device cuda --eval-every 16 --checkpoint ml/checkpoints/latest.pt --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3 --named-checkpoint human_first_65k.pt
+    cp -f ml/checkpoints/latest.pt ml/checkpoints/{{run_name}}_pretrain_final.pt
+    @echo "Saved pretraining final checkpoint: ml/checkpoints/{{run_name}}_pretrain_final.pt"
+    ML_SERVER_BIN={{ml_server_bin}} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {{python}} ml/train_online.py --rounds 512 --games-per-round 128 --workers 32 --mc-rollouts 4 --device cuda --eval-every 16 --checkpoint ml/checkpoints/{{run_name}}_pretrain_final.pt --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3 --named-checkpoint {{run_name}}_selfplay_final.pt
+    cp -f ml/checkpoints/best.pt ml/checkpoints/{{run_name}}_selfplay_best.pt
+    @echo "Saved self-play final checkpoint: ml/checkpoints/{{run_name}}_selfplay_final.pt"
+    @echo "Saved self-play best checkpoint:  ml/checkpoints/{{run_name}}_selfplay_best.pt"
 
 # 128k-game run profile: 256 games/round, 24 workers (optimized for this machine).
 train-128k: setup-ml
