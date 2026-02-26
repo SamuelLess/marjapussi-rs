@@ -62,7 +62,14 @@ build-ml-server-ui-runtime:
 ensure-ml-server-release:
     @if [ ! -f "{{ml_server_bin}}" ] || [ -n "$(find src Cargo.toml Cargo.lock -type f -newer "{{ml_server_bin}}" 2>/dev/null | head -n 1)" ]; then \
         echo "Building fresh release ml_server..."; \
-        RUSTFLAGS="-C target-cpu=native" cargo build --release --bin ml_server; \
+        if RUSTFLAGS="-C target-cpu=native" cargo build --release --bin ml_server; then \
+            true; \
+        elif [ -f "{{ml_server_bin}}" ]; then \
+            echo "WARN: ml_server rebuild failed (likely Windows file lock). Falling back to existing binary: {{ml_server_bin}}"; \
+        else \
+            echo "ERROR: ml_server build failed and no existing binary is available."; \
+            exit 1; \
+        fi; \
     else \
         echo "Using up-to-date release ml_server: {{ml_server_bin}}"; \
     fi
@@ -80,7 +87,14 @@ ensure-ml-server-ui-runtime:
 ensure-ml-convert-release:
     @if [ ! -f "{{ml_convert_bin}}" ] || [ -n "$(find src Cargo.toml Cargo.lock -type f -newer "{{ml_convert_bin}}" 2>/dev/null | head -n 1)" ]; then \
         echo "Building fresh release ml_convert_legacy..."; \
-        RUSTFLAGS="-C target-cpu=native" cargo build --release --bin ml_convert_legacy; \
+        if RUSTFLAGS="-C target-cpu=native" cargo build --release --bin ml_convert_legacy; then \
+            true; \
+        elif [ -f "{{ml_convert_bin}}" ]; then \
+            echo "WARN: ml_convert_legacy rebuild failed (likely Windows file lock). Falling back to existing binary: {{ml_convert_bin}}"; \
+        else \
+            echo "ERROR: ml_convert_legacy build failed and no existing binary is available."; \
+            exit 1; \
+        fi; \
     else \
         echo "Using up-to-date release ml_convert_legacy: {{ml_convert_bin}}"; \
     fi
