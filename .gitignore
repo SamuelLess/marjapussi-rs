@@ -35,10 +35,17 @@ pip-wheel-metadata/
 # ML/training artifacts
 ml/checkpoints/
 ml/runs/
+ml/.runtime_bins/
 *.pt
 *.onnx
 *.safetensors
 *.bin
+
+# Accidental root-level run artifacts from shell variable expansion mishaps
+/*run_bin
+/*run_bin_dir/
+/*run_ckpt/
+/*run_logs/
 
 # Local benchmark/debug dumps
 *.ndjson
