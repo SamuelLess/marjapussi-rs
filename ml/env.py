@@ -14,6 +14,8 @@ import torch.nn.functional as F
 
 from model import build_card_features_batch, NUM_CARDS
 
+SUPPORTED_OBS_SCHEMA_VERSION = 1
+
 def resolve_ml_server_binary(binary_path: Optional[str | Path] = None) -> Path:
     """Resolve the ml_server binary path with stable override semantics."""
     if binary_path is not None:
@@ -207,6 +209,14 @@ class MarjapussiEnv:
 
 def obs_to_tensors(obs: dict, labels: Optional[dict] = None) -> dict:
     """Convert a single raw observation dict to model-ready tensors (batch dim=1)."""
+
+    schema_version = obs.get("schema_version")
+    if schema_version is not None and int(schema_version) != SUPPORTED_OBS_SCHEMA_VERSION:
+        raise ValueError(
+            f"Unsupported observation schema_version={schema_version}; "
+            f"expected {SUPPORTED_OBS_SCHEMA_VERSION}. "
+            "Update loader/model compatibility before continuing."
+        )
 
     def bitmask(key):
         return torch.tensor(obs[key], dtype=torch.float32).unsqueeze(0)  # [1, 36]

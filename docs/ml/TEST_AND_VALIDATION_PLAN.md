@@ -26,6 +26,7 @@ Define the minimum test coverage needed before large-scale training and public-f
 1. ML serializer does not expose forbidden hidden fields.
 2. Debug serializer can expose full fields without ML contamination.
 3. Non-POV turn legal-action encoding does not leak hidden exact cards.
+4. Python loader rejects unsupported `schema_version` at runtime.
 
 ### 2.3 Dataset conversion integrity
 

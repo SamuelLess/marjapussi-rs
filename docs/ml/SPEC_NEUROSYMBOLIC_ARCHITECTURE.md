@@ -94,3 +94,9 @@ Any change to observation schema, token vocabulary, or action encoding must:
 2. Include migration notes for datasets/checkpoints.
 3. Add compatibility tests in `TEST_AND_VALIDATION_PLAN.md`.
 
+Versioning implementation policy:
+
+1. `schema_version` is carried in observation payload metadata.
+2. Loader/runtime must enforce compatibility before tensorization.
+3. `schema_version` is not part of neural input features.
+

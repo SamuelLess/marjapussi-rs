@@ -52,7 +52,8 @@ Requirements:
 
 1. `env.py` and training loaders consume only `ObservationMl`.
 2. UI server may consume both, but ML path remains strict.
-3. Schema version id included in payload.
+3. Schema version id included in payload metadata (`schema_version`).
+4. Schema version metadata is a compatibility gate only and must not be fed as a model feature.
 
 ## 8. Test Requirements
 
@@ -66,6 +67,6 @@ Automated tests must assert:
 ## 9. Operational Safeguards
 
 1. Add static denylist check in CI for ML observation serializer.
-2. Add runtime assertion in Python loader to reject unknown high-risk fields.
+2. Add runtime assertion in Python loader to reject schema-version mismatches.
 3. Log and hard-fail if schema mismatch occurs.
 
