@@ -37,7 +37,7 @@ import torch.optim as optim
 from torch.amp import GradScaler, autocast
 
 sys.path.insert(0, str(Path(__file__).parent))
-from model import MarjapussiNet
+from model import ACTION_FEAT_DIM, MarjapussiNet
 from env import MarjapussiEnv, obs_to_tensors
 
 CKPT_DIR = Path(__file__).parent / "checkpoints"
@@ -355,7 +355,7 @@ def collate(transitions: list[Transition], device: str):
         L = int(t.obs["token_ids"].shape[1])
         tok[i, :L] = t.obs["token_ids"][0]; tmask[i, :L] = t.obs["token_mask"][0]
 
-    af = torch.zeros((B, max_act, 51))
+    af = torch.zeros((B, max_act, ACTION_FEAT_DIM))
     am = torch.ones((B, max_act), dtype=torch.bool)
     for i, t in enumerate(transitions):
         A = t.obs["action_feats"].shape[1]

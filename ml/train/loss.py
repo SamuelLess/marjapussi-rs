@@ -54,7 +54,11 @@ def train_step(
 
         # Bid Masking Regularizer:
         # Check if the chosen action is a BID (action_type 1 is one-hot at index 1 of action_feats)
-        chosen_feats = batch["action_feats"].gather(1, batch["action_idx"].unsqueeze(1).unsqueeze(2).expand(-1, -1, 51)).squeeze(1)
+        feat_dim = int(batch["action_feats"].shape[-1])
+        chosen_feats = batch["action_feats"].gather(
+            1,
+            batch["action_idx"].unsqueeze(1).unsqueeze(2).expand(-1, -1, feat_dim),
+        ).squeeze(1)
         is_bid = chosen_feats[:, 1] > 0.5
 
         policy_mask = sampled_mask.clone()

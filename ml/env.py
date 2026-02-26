@@ -12,7 +12,7 @@ from typing import Optional
 import torch
 import torch.nn.functional as F
 
-from model import build_card_features_batch, NUM_CARDS
+from model import ACTION_FEAT_DIM, build_card_features_batch, NUM_CARDS
 
 SUPPORTED_OBS_SCHEMA_VERSION = 1
 
@@ -274,7 +274,7 @@ def obs_to_tensors(obs: dict, labels: Optional[dict] = None) -> dict:
     token_ids = torch.tensor(tokens, dtype=torch.long).unsqueeze(0)
     token_mask = torch.zeros((1, len(tokens)), dtype=torch.bool)
 
-    # Legal action features [1, A, 51]
+    # Legal action features [1, A, ACTION_FEAT_DIM]
     action_feats, action_mask = encode_legal_actions(obs['legal_actions'])
 
     # Hidden-hand supervision targets (relative opponents: left, partner, right).
@@ -320,9 +320,9 @@ def trick_bitmask(obs: dict) -> torch.Tensor:
 
 
 def encode_legal_actions(legal: list[dict]) -> tuple[torch.Tensor, torch.Tensor]:
-    """Encode legal actions as [1, A, 51] feature tensors."""
+    """Encode legal actions as [1, A, ACTION_FEAT_DIM] feature tensors."""
     A = max(len(legal), 1)
-    feats = torch.zeros((1, A, 51))
+    feats = torch.zeros((1, A, ACTION_FEAT_DIM))
     mask = torch.ones((1, A), dtype=torch.bool)  # True = ignored
 
     # Action type one-hot: 15 types
@@ -335,8 +335,7 @@ def encode_legal_actions(legal: list[dict]) -> tuple[torch.Tensor, torch.Tensor]
         type_idx = ACTION_TOKENS.get(tok, 11)
         feats[0, i, type_idx] = 1.0  # action type [0..14]
 
-        # Card features [15..46] (32-dim placeholder, filled by model's card_emb)
-        # We encode a simplified card one-hot here:
+        # Card/summarized action features.
         if la.get('card_idx') is not None:
             c = la['card_idx']
             suit_oh = F.one_hot(torch.tensor(c // 9), 4).float()
@@ -344,8 +343,14 @@ def encode_legal_actions(legal: list[dict]) -> tuple[torch.Tensor, torch.Tensor]
             feats[0, i, 15:19] = suit_oh
             feats[0, i, 19:28] = val_oh
         elif la.get('pass_cards'):
-            # Encode pass actions by suit/value histograms so different pass sets are learnable.
+            # Exact pass-set encoding: retain full card identity information.
+            # Layout: [33..68] -> 36-bit selected-card mask.
             cards = la['pass_cards']
+            for c in cards:
+                if 0 <= c < NUM_CARDS:
+                    feats[0, i, 33 + c] = 1.0
+
+            # Keep compact suit/value summaries as auxiliary inductive features.
             suit_hist = torch.zeros(4)
             val_hist = torch.zeros(9)
             denom = float(max(len(cards), 1))
@@ -363,7 +368,7 @@ def encode_legal_actions(legal: list[dict]) -> tuple[torch.Tensor, torch.Tensor]
         if la.get('bid_value') is not None:
             feats[0, i, 32] = (la['bid_value'] - 120) / 300.0
 
-    return feats, mask  # [1, A, 51], [1, A]
+    return feats, mask  # [1, A, ACTION_FEAT_DIM], [1, A]
 
 
 if __name__ == '__main__':

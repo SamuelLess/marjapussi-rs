@@ -21,7 +21,7 @@ import torch.optim as optim
 from torch.cuda.amp import GradScaler, autocast
 
 sys.path.insert(0, str(Path(__file__).parent))
-from model import MarjapussiNet
+from model import ACTION_FEAT_DIM, MarjapussiNet
 from env import obs_to_tensors
 
 CKPT_DIR = Path(__file__).parent / "checkpoints"
@@ -125,7 +125,7 @@ def collate(records: list[dict]):
         tok[i, :L] = t["token_ids"][0]
         tok_mask[i, :L] = t["token_mask"][0]
 
-    af = torch.zeros(B, max_act, 51)
+    af = torch.zeros(B, max_act, ACTION_FEAT_DIM)
     am = torch.ones(B, max_act, dtype=torch.bool)
     for i, t in enumerate(tensors):
         A = t["action_feats"].shape[1]

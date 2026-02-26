@@ -28,6 +28,7 @@ Required:
 
 1. Exact pass-set representation (for example 36-bit mask for selected 4 cards).
 2. Optional engineered summary features (suit histogram, value histogram) as auxiliary.
+3. Current implementation target: action feature layout reserves `[33..68]` for the 36-bit pass-card mask.
 
 Not sufficient alone:
 

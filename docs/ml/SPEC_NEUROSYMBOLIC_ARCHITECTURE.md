@@ -71,6 +71,7 @@ Requirements:
 1. Illegal actions are masked before softmax.
 2. Action encoding is expressive enough for all action families.
 3. Passing actions must be uniquely representable (see passing spec).
+4. Passing representation must include exact card identity (not histogram-only aliases).
 
 ## 6. Mandatory Invariants
 

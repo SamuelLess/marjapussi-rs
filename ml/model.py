@@ -18,6 +18,7 @@ import torch.nn.functional as F
 VOCAB_SIZE = 250
 CARD_BASE = 70       # card tokens 70..105
 NUM_CARDS = 36
+ACTION_FEAT_DIM = 87
 SUIT_BASE = 60       # suit tokens 60..63
 NUM_SUITS = 4
 NUM_ROLES = 5        # VH/MH/LH/RH/None
@@ -224,7 +225,7 @@ class ActionScorer(nn.Module):
     → scores:     [B, max_actions]
     """
 
-    def __init__(self, action_feat_dim=51, state_dim=512, hist_dim=256, action_emb_dim=128):
+    def __init__(self, action_feat_dim=ACTION_FEAT_DIM, state_dim=512, hist_dim=256, action_emb_dim=128):
         super().__init__()
         self.action_enc = nn.Sequential(
             nn.Linear(action_feat_dim, action_emb_dim),
@@ -242,7 +243,7 @@ class ActionScorer(nn.Module):
                 history_vec: torch.Tensor,
                 action_mask: torch.Tensor) -> torch.Tensor:
         """
-        action_feats: [B, A, 51]
+        action_feats: [B, A, ACTION_FEAT_DIM]
         state_vec:    [B, 128]
         history_vec:  [B, 64]
         action_mask:  [B, A] bool — True = padding (no action)
@@ -305,7 +306,7 @@ class MarjapussiNet(nn.Module):
             obs_a:          dict of Stream A tensors (see StreamA.forward)
             token_ids:      [B, L] int64
             token_mask:     [B, L] bool
-            action_feats:   [B, A, 51] float
+            action_feats:   [B, A, ACTION_FEAT_DIM] float
             action_mask:    [B, A] bool
 
         returns:
@@ -358,7 +359,7 @@ if __name__ == '__main__':
         'obs_a': obs_a,
         'token_ids': torch.zeros((B, L), dtype=torch.long),
         'token_mask': torch.zeros((B, L), dtype=torch.bool),
-        'action_feats': torch.zeros((B, A, 51)),
+        'action_feats': torch.zeros((B, A, ACTION_FEAT_DIM)),
         'action_mask': torch.zeros((B, A), dtype=torch.bool),
     }
     logits, card_logits, point_preds, value_pred = model(batch)

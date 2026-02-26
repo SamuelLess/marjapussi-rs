@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 
 from env import MarjapussiEnv
+from model import ACTION_FEAT_DIM
 from .utils import Log
 
 class BatchInferenceServer:
@@ -63,7 +64,7 @@ class BatchInferenceServer:
                 L = int(t["token_ids"].shape[1])
                 tok[i,:L] = t["token_ids"][0].to(dev); tmask[i,:L] = t["token_mask"][0].to(dev)
             
-            af = torch.zeros((B, max_a, 51), device=dev)
+            af = torch.zeros((B, max_a, ACTION_FEAT_DIM), device=dev)
             am = torch.ones((B, max_a), dtype=torch.bool, device=dev)
             for i, t in enumerate(tensors_list):
                 A = t["action_feats"].shape[1]

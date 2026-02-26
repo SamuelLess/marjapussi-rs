@@ -11,7 +11,7 @@ import argparse
 from pathlib import Path
 import torch
 
-from model import MarjapussiNet, build_card_features_batch
+from model import ACTION_FEAT_DIM, MarjapussiNet
 
 def export_onnx(checkpoint_path: str, output_path: str):
     device = "cpu"
@@ -42,7 +42,7 @@ def export_onnx(checkpoint_path: str, output_path: str):
         "token_mask": torch.ones((B, max_s), dtype=torch.bool, device=device),
         
         # Stream C: active legal actions
-        "action_feats": torch.zeros((B, max_a, 51), dtype=torch.float32, device=device),
+        "action_feats": torch.zeros((B, max_a, ACTION_FEAT_DIM), dtype=torch.float32, device=device),
         "action_mask": torch.ones((B, max_a), dtype=torch.bool, device=device),
     }
 
