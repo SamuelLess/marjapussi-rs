@@ -510,3 +510,38 @@ fn main() {
         output.display()
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_card_token() {
+        let c = parse_card_token("r-A").expect("parse r-A");
+        assert_eq!(c.suit, Suit::Red);
+        assert_eq!(c.value, Value::Ace);
+    }
+
+    #[test]
+    fn test_parse_single_action_question_my_maps_to_announce() {
+        let a = parse_single_action("1,QUES,mys").expect("parse action");
+        assert_eq!(a.player, PlaceAtTable(1));
+        assert_eq!(a.action_type, ActionType::AnnounceTrump(Suit::Bells));
+    }
+
+    #[test]
+    fn test_parse_pass_action_group() {
+        let group = vec![
+            "2,PASS,r-A".to_string(),
+            "2,PASS,e-7".to_string(),
+            "2,PASS,g-K".to_string(),
+            "2,PASS,s-9".to_string(),
+        ];
+        let action = parse_pass_action(&group).expect("parse pass group");
+        assert_eq!(action.player, PlaceAtTable(2));
+        match action.action_type {
+            ActionType::Pass(cards) => assert_eq!(cards.len(), 4),
+            _ => panic!("expected pass action"),
+        }
+    }
+}

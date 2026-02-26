@@ -59,6 +59,12 @@ Define the minimum test coverage needed before large-scale training and public-f
 3. End-to-end smoke tests for short training/eval loops.
 4. Regression tests for known historical bugs.
 
+Current baseline tests include:
+
+1. Rust inference/set-theory tests in `src/ml/inference.rs`.
+2. Rust legacy-converter parser tests in `src/bin/ml_convert_legacy.rs`.
+3. Python env/reward sanity tests in `ml/tests/test_env_reward_basics.py`.
+
 ## 4. CI Gate Requirements
 
 Must pass before merge:
