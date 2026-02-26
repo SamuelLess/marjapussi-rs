@@ -500,18 +500,29 @@ function renderHand(s, obs, tableViewSeat) {
   const active = getActiveSeat(obs);
   const isMyTurn = active === s;
   const isHuman = effectiveMode(s) === 'human';
-  const activeObs = isMyTurn ? (actionObsForSeat(active) || obs) : null;
-  const canAct = isMyTurn && (isHuman || debugMode);
+  const activeSeatObs = isMyTurn ? actionObsForSeat(active) : null;
+  // Never fall back to P0 observation when a non-P0 human seat is active.
+  const activeObs = isMyTurn ? (activeSeatObs || (active === 0 ? obs : null)) : null;
+  const canAct = isMyTurn && (isHuman || debugMode) && !!activeObs;
   const phaseObs = activeObs || obs;
   const isPassing = (phaseObs.phase === "PassingForth" || phaseObs.phase === "PassingBack");
-  const hasSequentialPass = isPassing && (phaseObs.legal_actions || []).some(
+  const hasSequentialPass = isPassing && !!activeObs && (activeObs.legal_actions || []).some(
     la => la.action_token === 52 && la.card_idx != null
   );
+  const directPassCombos = (isPassing && !!activeObs && !hasSequentialPass)
+    ? (activeObs.legal_actions || []).filter(
+      la => Array.isArray(la.pass_cards) && la.pass_cards.length === 4
+    )
+    : [];
+  const passCandidates = new Set();
+  directPassCombos.forEach(la => (la.pass_cards || []).forEach(ci => passCandidates.add(ci)));
   const selectedPassCards = selectedPassCardsBySeat[s];
 
   if (isHuman && isMyTurn) {
     if (isPassing) {
-      if (hasSequentialPass) {
+      if (!activeObs) {
+        selectedPassCards.clear();
+      } else if (hasSequentialPass) {
         selectedPassCards.clear();
         (phaseObs.pass_selection_indices || []).forEach(ci => selectedPassCards.add(ci));
       }
@@ -573,8 +584,13 @@ function renderHand(s, obs, tableViewSeat) {
 
       sortedHand.forEach(i => {
         const ai = lm.get(i);
+        const passLegal = isPassing && (
+          hasSequentialPass
+            ? (ai !== undefined || selectedPassCards.has(i))
+            : passCandidates.has(i)
+        );
         const legalPlay = canAct && (
-          ai !== undefined || (isPassing && (hasSequentialPass ? selectedPassCards.has(i) : true))
+          ai !== undefined || passLegal
         );
         let cls = legalPlay ? 'legal' : '';
 
@@ -589,7 +605,9 @@ function renderHand(s, obs, tableViewSeat) {
         card.addEventListener('click', () => {
           // Re-evaluate current state dynamically (since DOM nodes persist)
           const activeNow = getActiveSeat(gs?.obs);
-          const currActionObs = activeNow >= 0 ? (actionObsForSeat(activeNow) || gs?.obs) : gs?.obs;
+          const currSeatObs = activeNow >= 0 ? actionObsForSeat(activeNow) : null;
+          const currActionObs = activeNow >= 0 ? (currSeatObs || (activeNow === 0 ? gs?.obs : null)) : null;
+          if (!currActionObs) return;
           const currLm = new Map();
           (currActionObs?.legal_actions || []).forEach(la => {
             if (la.card_idx != null) currLm.set(la.card_idx, la.action_list_idx);
@@ -599,9 +617,22 @@ function renderHand(s, obs, tableViewSeat) {
           const currSeqPass = currPassing && (currActionObs?.legal_actions || []).some(
             la => la.action_token === 52 && la.card_idx != null
           );
+          const currPassCandidates = new Set();
+          if (currPassing && !currSeqPass) {
+            (currActionObs?.legal_actions || []).forEach(la => {
+              if (Array.isArray(la.pass_cards) && la.pass_cards.length === 4) {
+                la.pass_cards.forEach(ci => currPassCandidates.add(ci));
+              }
+            });
+          }
           const canActNow = (activeNow === s) && (effectiveMode(s) === 'human' || debugMode);
+          const passLegalNow = currPassing && (
+            currSeqPass
+              ? (currAi !== undefined || selectedPassCards.has(i))
+              : currPassCandidates.has(i)
+          );
           const legalNow = canActNow && (
-            currAi !== undefined || (currPassing && (currSeqPass ? selectedPassCards.has(i) : true))
+            currAi !== undefined || passLegalNow
           );
           if (!legalNow) return; // ignore clicks if currently not legal
 
@@ -622,6 +653,8 @@ function renderHand(s, obs, tableViewSeat) {
                 if (match) {
                   send({ cmd: 'human_action', action_list_idx: match.action_list_idx });
                   selectedPassCards.clear();
+                } else {
+                  evLog(em('cross', 'x'), 'Diese 4 Karten sind so nicht legal schiebbar.', 'err-ev');
                 }
               }
               render();
@@ -645,8 +678,13 @@ function renderHand(s, obs, tableViewSeat) {
       el.querySelectorAll('.card').forEach(card => {
         const ci = +card.dataset.ci;
         const ai = lm.get(ci);
+        const passLegal = isPassing && (
+          hasSequentialPass
+            ? (ai !== undefined || selectedPassCards.has(ci))
+            : passCandidates.has(ci)
+        );
         const legalPlay = canAct && (
-          ai !== undefined || (isPassing && (hasSequentialPass ? selectedPassCards.has(ci) : true))
+          ai !== undefined || passLegal
         );
 
         card.classList.toggle('legal', legalPlay);
@@ -756,7 +794,19 @@ function renderBidArea(obs, active) {
   // Move bid area to active player so buttons appear under their cards
   document.getElementById('p' + active).appendChild(ba);
 
-  const actObs = actionObsForSeat(active) || obs;
+  const seatObsForActive = actionObsForSeat(active);
+  const actObs = seatObsForActive || (active === 0 ? obs : null);
+  if (!actObs) {
+    ba.dataset.ahash = '';
+    ba.innerHTML = '';
+    const wait = document.createElement('div');
+    wait.className = 'bid-btn';
+    wait.style.opacity = '0.6';
+    wait.style.cursor = 'default';
+    wait.textContent = 'Warte auf legale Aktionen...';
+    ba.appendChild(wait);
+    return;
+  }
   const legal = actObs.legal_actions || [];
   const selectedPassCards = selectedPassCardsBySeat[active];
 
@@ -780,19 +830,26 @@ function renderBidArea(obs, active) {
       }
       ba.appendChild(txt);
     } else {
+      const directPassCombos = legal.filter(
+        la => Array.isArray(la.pass_cards) && la.pass_cards.length === 4
+      );
       const btn = document.createElement('button');
       btn.className = 'bid-btn act';
       if (selectedPassCards.size === 4) {
-        btn.textContent = `Schieben (4/4)`;
         const selArr = [...selectedPassCards].sort((a, b) => a - b);
+        const match = directPassCombos.find(la => {
+          const pc = (la.pass_cards || []).slice().sort((a, b) => a - b);
+          return pc.length === 4 && pc.every((v, idx) => v === selArr[idx]);
+        });
+        btn.textContent = match ? `Schieben (4/4)` : `Auswahl nicht legal (4/4)`;
         btn.onclick = () => {
-          const match = legal.find(la => {
-            const pc = (la.pass_cards || []).slice().sort((a, b) => a - b);
-            return pc.length === 4 && pc.every((v, idx) => v === selArr[idx]);
-          });
           if (match) send({ cmd: 'human_action', action_list_idx: match.action_list_idx });
           selectedPassCards.clear();
         };
+        if (!match) {
+          btn.disabled = true;
+          btn.style.opacity = '0.5';
+        }
       } else {
         btn.textContent = `Waehle 4 Karten (${selectedPassCards.size}/4)`;
         btn.disabled = true;

@@ -194,9 +194,31 @@ train-1k-human run_name="human_smoke_1k": setup-ml build-human-dataset
 # Alias matching requested naming style.
 just-1k-human: train-1k-human
 
-# 128k-game run profile: 256 games/round, 24 workers (optimized for this machine).
-train-128k run_name="set_theory_128k": setup-ml
-    @echo "Running 128k profile using virtual environment python: {{python}}"
+# 128k-game human-first run profile:
+# 1) convert legacy logs, 2) stronger supervised warm-start, 3) 512x256 (131,072 games) RL self-play.
+train-128k run_name="set_theory_128k": setup-ml build-human-dataset
+    @echo "Running 128k human-first profile with stronger pretraining warm-start..."
+    @run_label="{{run_name}}"; \
+      case "$run_label" in run_name=*) run_label="${run_label#run_name=}" ;; esac; \
+      run_root="ml/runs/$run_label"; \
+      run_ckpt="$run_root/checkpoints"; \
+      run_logs="$run_root/logs"; \
+      run_bin_dir="$run_root/bin"; \
+      run_bin="$run_bin_dir/$(basename "{{ml_server_bin}}")"; \
+      mkdir -p "$run_ckpt" "$run_logs" "$run_bin_dir"; \
+      cp -f "{{ml_server_bin}}" "$run_bin"; \
+      {{cuda_alloc_env}} {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 24 --batch 256 --workers 2 --device cuda --max-steps 12000 --bid-weight 2.5 --pass-weight 3.0 --lr-schedule plateau --lr 3e-4 --lr-min 6e-5 --lr-warmup-steps 384 --lr-plateau-patience 2 --lr-plateau-factor 0.7 --lr-plateau-threshold 8e-4 --lr-plateau-cooldown 1 --checkpoints-dir "$run_ckpt"; \
+      cp -f "$run_ckpt/latest.pt" "$run_ckpt/$run_label"_pretrain_final.pt; \
+      echo "Saved pretraining final checkpoint: $run_ckpt/$run_label"_pretrain_final.pt; \
+      ML_SERVER_BIN="$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 512 --games-per-round 256 --workers 24 --mc-rollouts 4 --device cuda --eval-every 16 --checkpoint "$run_ckpt/$run_label"_pretrain_final.pt --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3 --hidden-loss-weight 0.10 --impossible-penalty-weight 2.00 --named-checkpoint "$run_label"_selfplay_final.pt --checkpoints-dir "$run_ckpt" --runs-dir "$run_logs"; \
+      cp -f "$run_ckpt/best.pt" "$run_ckpt/$run_label"_selfplay_best.pt; \
+      echo "Saved self-play final checkpoint: $run_ckpt/$run_label"_selfplay_final.pt; \
+      echo "Saved self-play best checkpoint:  $run_ckpt/$run_label"_selfplay_best.pt; \
+      echo "Artifacts root: $run_root"
+
+# 128k scratch-only profile (no supervised warm-start).
+train-128k-scratch run_name="set_theory_128k_scratch": setup-ml
+    @echo "Running 128k scratch profile using virtual environment python: {{python}}"
     @run_label="{{run_name}}"; \
       case "$run_label" in run_name=*) run_label="${run_label#run_name=}" ;; esac; \
       run_root="ml/runs/$run_label"; \
@@ -209,7 +231,7 @@ train-128k run_name="set_theory_128k": setup-ml
       ML_SERVER_BIN="$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 512 --games-per-round 256 --workers 24 --mc-rollouts 4 --device cuda --eval-every 16 --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3 --hidden-loss-weight 0.10 --impossible-penalty-weight 2.00 --named-checkpoint "$run_label".pt --checkpoints-dir "$run_ckpt" --runs-dir "$run_logs"; \
       echo "Artifacts root: $run_root"
 
-# Same 128k profile but with user-defined named checkpoint (auto-resume if it exists).
+# Resume/continue 128k from a named run checkpoint.
 train-128k-named run_name="set_theory_128k": setup-ml
     @echo "Running named 128k profile checkpoint={{run_name}}.pt using virtual environment python: {{python}}"
     @run_label="{{run_name}}"; \
@@ -252,4 +274,4 @@ ui checkpoint="latest" port="8765": install-ml-deps ensure-ml-server-ui-runtime
       ui_port="{{port}}"; \
       case "$ui_port" in port=*) ui_port="${ui_port#port=}" ;; esac; \
       echo "Starting UI server (http://localhost:$ui_port) with checkpoint=$ui_ckpt ..."; \
-      exec ML_SERVER_BIN="{{ui_ml_server_bin}}" {{python}} ml/ui_server.py --port "$ui_port" --checkpoint "$ui_ckpt"
+      ML_SERVER_BIN="{{ui_ml_server_bin}}" exec {{python}} ml/ui_server.py --port "$ui_port" --checkpoint "$ui_ckpt"

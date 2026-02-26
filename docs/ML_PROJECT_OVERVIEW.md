@@ -105,7 +105,8 @@ This overview is the intent document. Implementation contracts are in:
 5. `docs/ml/SPEC_OBSERVATION_PRIVACY.md`
 6. `docs/ml/SPEC_COUNTERFACTUAL_ADVANTAGE.md`
 7. `docs/ml/SPEC_PASSING_CURRICULUM.md`
-8. `docs/ml/TEST_AND_VALIDATION_PLAN.md`
+8. `docs/ml/SPEC_PARALLEL_MODEL_ARCHITECTURE_V2.md`
+9. `docs/ml/TEST_AND_VALIDATION_PLAN.md`
 
 ## 9. Definition of Success
 

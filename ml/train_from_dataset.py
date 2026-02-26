@@ -6,7 +6,7 @@ Features:
   - Multi-worker DataLoader + pin_memory for GPU throughput
   - torch.amp mixed precision (fp16/bf16 depending on hardware)
   - MC advantage as primary loss signal when available, outcome as fallback
-  - Cosine LR schedule
+  - Configurable LR schedule (plateau/cosine/constant) with warmup + LR floor
 
 Usage:
   python ml/train_from_dataset.py --data ml/data/dataset.ndjson --device cuda --epochs 3
@@ -182,6 +182,10 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
           device: str = "cpu", ckpt: str | None = None, workers: int = 4,
           log_every: int = 500, amp: bool = True, max_steps: int = 0,
           bid_weight: float = 1.0, pass_weight: float = 1.0,
+          lr_schedule: str = "plateau", lr_min: float = 1e-5,
+          lr_warmup_steps: int = 128,
+          lr_plateau_patience: int = 1, lr_plateau_factor: float = 0.5,
+          lr_plateau_threshold: float = 1e-3, lr_plateau_cooldown: int = 0,
           checkpoints_dir: str | Path = DEFAULT_CKPT_DIR):
     configure_torch_runtime(device=device, workers=workers)
     ckpt_dir = Path(checkpoints_dir)
@@ -213,7 +217,33 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
         steps_per_epoch = max(1, 100_000 // max(1, batch))
         Log.warn("Could not count dataset lines; using fallback scheduler horizon.")
 
-    sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs * steps_per_epoch)
+    lr_schedule = str(lr_schedule).lower()
+    if lr_schedule not in ("plateau", "cosine", "constant"):
+        raise ValueError(f"Unsupported lr_schedule={lr_schedule!r} (expected plateau|cosine|constant)")
+
+    cosine_steps = max(1, (epochs * steps_per_epoch) - max(0, int(lr_warmup_steps)))
+    sched = None
+    if lr_schedule == "cosine":
+        sched = optim.lr_scheduler.CosineAnnealingLR(
+            opt,
+            T_max=cosine_steps,
+            eta_min=lr_min,
+        )
+    elif lr_schedule == "plateau":
+        sched = optim.lr_scheduler.ReduceLROnPlateau(
+            opt,
+            mode="min",
+            factor=lr_plateau_factor,
+            patience=lr_plateau_patience,
+            threshold=lr_plateau_threshold,
+            cooldown=lr_plateau_cooldown,
+            min_lr=lr_min,
+        )
+
+    Log.info(
+        f"LR control: schedule={lr_schedule}, base_lr={lr:.2e}, min_lr={lr_min:.2e}, "
+        f"warmup_steps={max(0, int(lr_warmup_steps))}"
+    )
     progress_interval = max(1, min(log_every, max(1, steps_per_epoch // 8)))
 
     global_step = 0
@@ -232,6 +262,17 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
         stop_early = False
         for batch_data in loader:
             if batch_data is None: continue
+
+            # Optional linear warmup to avoid unstable first updates.
+            if lr_warmup_steps > 0 and global_step < lr_warmup_steps:
+                warm_t = float(global_step + 1) / float(max(1, lr_warmup_steps))
+                warm_lr = lr_min + warm_t * (lr - lr_min)
+                for g in opt.param_groups:
+                    g["lr"] = float(warm_lr)
+            elif lr_warmup_steps > 0 and global_step == lr_warmup_steps and lr_schedule in ("plateau", "constant"):
+                # Plateau/constant schedules should continue from base LR after warmup.
+                for g in opt.param_groups:
+                    g["lr"] = float(lr)
 
             # Move to GPU (non-blocking for pinned memory)
             def to(x):
@@ -271,7 +312,8 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
             scaler.unscale_(opt)
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(opt); scaler.update()
-            sched.step()
+            if sched is not None and lr_schedule == "cosine" and global_step >= lr_warmup_steps:
+                sched.step()
             global_step += 1
 
             sum_loss += loss.item(); sum_bc += bc_loss.item(); sum_pts += pts_loss.item()
@@ -290,7 +332,7 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
                     f"Pts: {sum_pts/step:.4f} | "
                     f"{sample_rate:,.0f} samples/s | "
                     f"ETA: {_format_eta(eta)} | "
-                    f"LR: {sched.get_last_lr()[0]:.2e}",
+                    f"LR: {opt.param_groups[0]['lr']:.2e}",
                     end=""
                 )
 
@@ -305,6 +347,15 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
         avg_loss = sum_loss / max(1, step)
         avg_bc = sum_bc / max(1, step)
         avg_pts = sum_pts / max(1, step)
+        if sched is not None and lr_schedule == "plateau" and step > 0:
+            lr_before = float(opt.param_groups[0]["lr"])
+            sched.step(avg_loss)
+            lr_after = float(opt.param_groups[0]["lr"])
+            if lr_after < lr_before:
+                Log.info(
+                    f"LR reduced on plateau: {lr_before:.2e} -> {lr_after:.2e} "
+                    f"(epoch_loss={avg_loss:.4f})"
+                )
         ckpt_path = ckpt_dir / f"epoch_{epoch+1}.pt"
         torch.save(model.state_dict(), ckpt_path)
         torch.save(model.state_dict(), ckpt_dir / "latest.pt")
@@ -337,6 +388,20 @@ if __name__ == "__main__":
                    help="Extra supervised emphasis multiplier for bidding actions")
     p.add_argument("--pass-weight", type=float, default=1.0,
                    help="Extra supervised emphasis multiplier for passing/pick-pass-card actions")
+    p.add_argument("--lr-schedule", choices=["plateau", "cosine", "constant"], default="plateau",
+                   help="Learning-rate control strategy")
+    p.add_argument("--lr-min", type=float, default=1e-5,
+                   help="Lower LR floor for schedule and warmup")
+    p.add_argument("--lr-warmup-steps", type=int, default=128,
+                   help="Linear warmup steps before main LR schedule")
+    p.add_argument("--lr-plateau-patience", type=int, default=1,
+                   help="Epochs with no meaningful loss improvement before LR decay")
+    p.add_argument("--lr-plateau-factor", type=float, default=0.5,
+                   help="LR multiplier applied on plateau (e.g. 0.5 halves LR)")
+    p.add_argument("--lr-plateau-threshold", type=float, default=1e-3,
+                   help="Minimum relative improvement to avoid plateau trigger")
+    p.add_argument("--lr-plateau-cooldown", type=int, default=0,
+                   help="Cooldown epochs after each plateau LR reduction")
     p.add_argument("--no-amp",   action="store_true",         help="Disable mixed precision")
     p.add_argument("--checkpoints-dir", default=str(DEFAULT_CKPT_DIR),
                    help="Directory for pretraining checkpoints")
@@ -354,4 +419,10 @@ if __name__ == "__main__":
           workers=args.workers, log_every=args.log_every,
           amp=not args.no_amp, max_steps=args.max_steps,
           bid_weight=args.bid_weight, pass_weight=args.pass_weight,
+          lr_schedule=args.lr_schedule, lr_min=args.lr_min,
+          lr_warmup_steps=args.lr_warmup_steps,
+          lr_plateau_patience=args.lr_plateau_patience,
+          lr_plateau_factor=args.lr_plateau_factor,
+          lr_plateau_threshold=args.lr_plateau_threshold,
+          lr_plateau_cooldown=args.lr_plateau_cooldown,
           checkpoints_dir=args.checkpoints_dir)
