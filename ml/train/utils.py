@@ -1,7 +1,18 @@
 import collections
 
 Transition = collections.namedtuple("Transition",
-    ["obs", "action_idx", "advantage", "pts_my", "pts_opp", "value", "active_player", "log_prob", "imm_r"])
+    [
+        "obs",
+        "action_idx",
+        "advantage",
+        "pts_my",
+        "pts_opp",
+        "value",
+        "active_player",
+        "log_prob",
+        "is_forced",
+        "imm_r",
+    ])
 
 class Log:
     @staticmethod

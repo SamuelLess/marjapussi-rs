@@ -227,6 +227,7 @@ def run_episode(
                     value=val_pred,
                     active_player=active_player,
                     log_prob=log_prob,
+                    is_forced=force_heuristic_turn,
                     imm_r=0.0,
                 )
             else:
@@ -324,6 +325,7 @@ def run_episode(
                 returns[idx],
                 t.active_player,
                 t.log_prob,
+                t.is_forced,
                 t.imm_r,
             ))
 
@@ -380,6 +382,7 @@ def collate(transitions: list[Transition], device: str):
         "advantage":   torch.tensor([t.advantage for t in transitions]).to(device, non_blocking=True),
         "value":       torch.tensor([t.value for t in transitions]).to(device, non_blocking=True),
         "log_prob_old":torch.tensor([t.log_prob for t in transitions]).to(device, non_blocking=True),
+        "is_forced":   torch.tensor([float(t.is_forced) for t in transitions]).to(device, non_blocking=True),
         "pts_target":  torch.tensor([[t.pts_my, t.pts_opp] for t in transitions]).to(device, non_blocking=True),
         "hidden_target": hidden_target,
         "hidden_possible": hidden_possible,
@@ -452,6 +455,8 @@ def train_online(
     max_adv_calls_per_episode: int = 1,
     hidden_loss_weight: float = 0.3,
     impossible_penalty_weight: float = 2.0,
+    forced_imitation_weight: float = 0.5,
+    forced_imitation_decay_rounds: int = 128,
     named_checkpoint: str | None = None,
 ):
     configure_torch_runtime(device=device, workers=workers)
@@ -489,6 +494,10 @@ def train_online(
     Log.info(
         f"Hidden-state aux loss: weight={hidden_loss_weight:.2f}, "
         f"impossible_penalty={impossible_penalty_weight:.2f}"
+    )
+    Log.info(
+        f"Forced-action imitation: base_weight={forced_imitation_weight:.2f}, "
+        f"decay_rounds={forced_imitation_decay_rounds}"
     )
     Log.info(f"Params: {model.param_count():,}\n")
 
@@ -614,6 +623,11 @@ def train_online(
                     train_phase=train_phase,
                     hidden_loss_weight=hidden_loss_weight,
                     impossible_penalty_weight=impossible_penalty_weight,
+                    forced_imitation_weight=max(
+                        0.05,
+                        forced_imitation_weight
+                        * max(0.0, 1.0 - (rnd / max(1, forced_imitation_decay_rounds))),
+                    ),
                 )
                 if not math.isfinite(float(losses.get("total", float("nan")))):
                     invalid_batch_detected = True
@@ -681,7 +695,7 @@ def train_online(
         print(f"  - Games:    {games_per_round} ({rate:.1f} games/s)")
         print(f"  - Samples:  {n_trans} transitions")
         print(f"  - OptEpochs:{epoch}")
-        print(f"  - Losses:   Total: {avg_loss.get('total',0):.4f} | Pol: {avg_loss.get('policy',0):.4f} | Val: {avg_loss.get('value',0):.4f} | Ent: {avg_loss.get('entropy',0):.4f} | Pts: {avg_loss.get('pts',0):.4f} | Hidden: {avg_loss.get('hidden',0):.4f} | KL: {avg_loss.get('approx_kl',0):.4f} | Clip: {avg_loss.get('clipfrac',0):.3f}")
+        print(f"  - Losses:   Total: {avg_loss.get('total',0):.4f} | Pol: {avg_loss.get('policy',0):.4f} | Imit: {avg_loss.get('forced_imitation',0):.4f} | Val: {avg_loss.get('value',0):.4f} | Ent: {avg_loss.get('entropy',0):.4f} | Pts: {avg_loss.get('pts',0):.4f} | Hidden: {avg_loss.get('hidden',0):.4f} | KL: {avg_loss.get('approx_kl',0):.4f} | Clip: {avg_loss.get('clipfrac',0):.3f}")
         print(f"  - HiddenAux: PosBCE: {avg_loss.get('hidden_pos_loss',0):.4f} | ImpBCE: {avg_loss.get('hidden_impossible_loss',0):.4f} | PosAcc: {avg_loss.get('hidden_pos_acc',0):.3f} | ImpossibleMass: {avg_loss.get('impossible_mass',0):.3f}")
         print(f"  - Time:     Sim: {gen_time:.1f}s | Opt: {train_time:.1f}s")
 
@@ -774,6 +788,10 @@ if __name__ == "__main__":
                    help="Weight of hidden-hand auxiliary loss in total loss")
     p.add_argument("--impossible-penalty-weight", type=float, default=2.0,
                    help="Penalty multiplier for predicting cards that are impossible by symbolic constraints")
+    p.add_argument("--forced-imitation-weight", type=float, default=0.5,
+                   help="Base weight for imitation loss on heuristic-forced actions")
+    p.add_argument("--forced-imitation-decay-rounds", type=int, default=128,
+                   help="Rounds over which forced-action imitation weight decays")
     p.add_argument("--named-checkpoint", default=None,
                    help="Optional checkpoint filename/path to update every round")
     args = p.parse_args()
@@ -806,5 +824,7 @@ if __name__ == "__main__":
         max_adv_calls_per_episode=args.max_adv_calls_per_episode,
         hidden_loss_weight=args.hidden_loss_weight,
         impossible_penalty_weight=args.impossible_penalty_weight,
+        forced_imitation_weight=args.forced_imitation_weight,
+        forced_imitation_decay_rounds=args.forced_imitation_decay_rounds,
         named_checkpoint=args.named_checkpoint,
     )

@@ -12,6 +12,7 @@ def train_step(
     train_phase: str = "trick",
     hidden_loss_weight: float = 0.3,
     impossible_penalty_weight: float = 2.0,
+    forced_imitation_weight: float = 0.5,
 ) -> dict:
     model.train()
     with autocast(device_type='cuda', enabled=use_amp):
@@ -29,24 +30,15 @@ def train_step(
         log_p = F.log_softmax(masked_logits, dim=-1)
         chosen_lp = log_p.gather(1, batch["action_idx"].unsqueeze(1)).squeeze(1)
         
-        # PPO Policy Loss
-        # Clamp log_prob_old to avoid exp(-(-inf)) = exp(inf) = NaN
+        # Policy losses:
+        # - PPO ratio path only for model-sampled actions.
+        # - Forced heuristic actions use imitation-only loss.
         safe_log_prob_old = torch.clamp(batch["log_prob_old"], min=-100.0)
-        # Clamp chosen_lp to avoid extremely large negative values
         chosen_lp_clamped = torch.clamp(chosen_lp, min=-100.0)
-        ratio = torch.exp(chosen_lp_clamped - safe_log_prob_old)
-        
-        adv = batch["advantage"]
-        # Normalize advantages per batch
-        if adv.numel() > 1:
-            adv = (adv - adv.mean()) / (adv.std() + 1e-8)
-            
-        clip_epsilon = 0.2
-        surr1 = ratio * adv
-        surr2 = torch.clamp(ratio, 1.0 - clip_epsilon, 1.0 + clip_epsilon) * adv
-        policy_loss = -torch.min(surr1, surr2).mean()
-        approx_kl = (safe_log_prob_old - chosen_lp_clamped).mean()
-        clipfrac = ((ratio - 1.0).abs() > clip_epsilon).float().mean()
+        ratio_all = torch.exp(chosen_lp_clamped - safe_log_prob_old)
+        adv_all = batch["advantage"]
+        is_forced = batch.get("is_forced", torch.zeros_like(chosen_lp)).float() > 0.5
+        sampled_mask = ~is_forced
         
         # Value Loss
         value_loss = F.mse_loss(value_pred, batch["value"])
@@ -59,6 +51,39 @@ def train_step(
         
         # Points Prediction Loss
         pts_loss = F.mse_loss(pts_pred, batch["pts_target"]) * 0.3
+
+        # Bid Masking Regularizer:
+        # Check if the chosen action is a BID (action_type 1 is one-hot at index 1 of action_feats)
+        chosen_feats = batch["action_feats"].gather(1, batch["action_idx"].unsqueeze(1).unsqueeze(2).expand(-1, -1, 51)).squeeze(1)
+        is_bid = chosen_feats[:, 1] > 0.5
+
+        policy_mask = sampled_mask.clone()
+        imitation_mask = is_forced.clone()
+        if train_phase == "bidding_value":
+            non_bid = ~is_bid
+            policy_mask = policy_mask & non_bid
+            imitation_mask = imitation_mask & non_bid
+
+        clip_epsilon = 0.2
+        ppo_loss = torch.tensor(0.0, device=logits.device)
+        approx_kl = torch.tensor(0.0, device=logits.device)
+        clipfrac = torch.tensor(0.0, device=logits.device)
+        if policy_mask.any():
+            adv = adv_all[policy_mask]
+            if adv.numel() > 1:
+                adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+            ratio = ratio_all[policy_mask]
+            surr1 = ratio * adv
+            surr2 = torch.clamp(ratio, 1.0 - clip_epsilon, 1.0 + clip_epsilon) * adv
+            ppo_loss = -torch.min(surr1, surr2).mean()
+            approx_kl = (safe_log_prob_old[policy_mask] - chosen_lp_clamped[policy_mask]).mean()
+            clipfrac = ((ratio - 1.0).abs() > clip_epsilon).float().mean()
+
+        forced_imitation_loss = torch.tensor(0.0, device=logits.device)
+        if imitation_mask.any():
+            forced_imitation_loss = (-chosen_lp[imitation_mask]).mean()
+
+        policy_loss = ppo_loss + forced_imitation_weight * forced_imitation_loss
 
         # Hidden-state auxiliary loss:
         # - Positive supervision for cards that are truly in opponent hands.
@@ -107,17 +132,6 @@ def train_step(
 
             hidden_loss = pos_loss + impossible_penalty_weight * impossible_loss
         
-        # Total Base Loss
-        
-        # Bid Masking Regularizer:
-        # Check if the chosen action is a BID (action_type 1 is one-hot at index 1 of action_feats)
-        chosen_feats = batch["action_feats"].gather(1, batch["action_idx"].unsqueeze(1).unsqueeze(2).expand(-1, -1, 51)).squeeze(1)
-        is_bid = chosen_feats[:, 1] > 0.5
-        
-        if train_phase == "bidding_value":
-            # Zero out policy loss for bidding actions, let it just learn the Value
-            policy_loss = (torch.min(surr1, surr2) * (~is_bid).float()).mean() * -1.0
-            
         loss = (
             policy_loss
             + 0.5 * value_loss
@@ -156,6 +170,7 @@ def train_step(
             "impossible_mass": float('nan'),
             "approx_kl": float('nan'),
             "clipfrac": float('nan'),
+            "forced_imitation": float('nan'),
         }
 
     opt.zero_grad(set_to_none=True)
@@ -189,4 +204,5 @@ def train_step(
         "impossible_mass": impossible_mass.item() if grads_valid else float('nan'),
         "approx_kl": approx_kl.item() if grads_valid else float('nan'),
         "clipfrac": clipfrac.item() if grads_valid else float('nan'),
+        "forced_imitation": forced_imitation_loss.item() if grads_valid else float('nan'),
     }
