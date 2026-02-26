@@ -24,6 +24,11 @@ struct LegacyGameRecord {
     actions: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct LegacyGameDataset {
+    games: Vec<LegacyGameRecord>,
+}
+
 #[derive(Debug)]
 struct DecisionPoint {
     obs: ObservationJson,
@@ -441,27 +446,47 @@ fn main() {
         panic!("failed to read {}: {e}", input.display());
     });
 
-    let records: Vec<LegacyGameRecord> = if content.trim_start().starts_with('[') {
-        serde_json::from_str(&content).unwrap_or_else(|e| {
+    let records: Vec<LegacyGameRecord> = match serde_json::from_str::<serde_json::Value>(&content) {
+        Ok(serde_json::Value::Array(_)) => serde_json::from_str(&content).unwrap_or_else(|e| {
             panic!("failed to parse {} as JSON array: {e}", input.display());
-        })
-    } else {
-        let mut parsed = Vec::new();
-        for (line_no, line) in content.lines().enumerate() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            let rec: LegacyGameRecord = serde_json::from_str(trimmed).unwrap_or_else(|e| {
+        }),
+        Ok(serde_json::Value::Object(_)) => {
+            if let Ok(dataset) = serde_json::from_str::<LegacyGameDataset>(&content) {
+                dataset.games
+            } else if let Ok(single) = serde_json::from_str::<LegacyGameRecord>(&content) {
+                vec![single]
+            } else {
                 panic!(
-                    "failed to parse {} line {} as JSON object: {e}",
-                    input.display(),
-                    line_no + 1
+                    "failed to parse {} as JSON object. Expected either {{\"games\":[...]}} or a single game object.",
+                    input.display()
                 );
-            });
-            parsed.push(rec);
+            }
         }
-        parsed
+        Ok(_) => {
+            panic!(
+                "unsupported JSON top-level in {}. Expected array/object or NDJSON lines.",
+                input.display()
+            );
+        }
+        Err(_) => {
+            // Backward-compatible fallback: one JSON object per line (NDJSON-like).
+            let mut parsed = Vec::new();
+            for (line_no, line) in content.lines().enumerate() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let rec: LegacyGameRecord = serde_json::from_str(trimmed).unwrap_or_else(|e| {
+                    panic!(
+                        "failed to parse {} line {} as JSON object: {e}",
+                        input.display(),
+                        line_no + 1
+                    );
+                });
+                parsed.push(rec);
+            }
+            parsed
+        }
     };
     let total = limit.unwrap_or(records.len()).min(records.len());
 
