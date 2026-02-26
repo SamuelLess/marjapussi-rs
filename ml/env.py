@@ -253,11 +253,38 @@ class MarjapussiEnv:
 
     def close(self):
         if self.proc:
-            if self.proc.stdin and not self.proc.stdin.closed:
-                self.proc.stdin.close()
+            try:
+                if self.proc.stdin and not self.proc.stdin.closed:
+                    self.proc.stdin.close()
+            except Exception:
+                pass
+
             if self.proc.poll() is None:
-                self.proc.terminate()
-                self.proc.wait()
+                try:
+                    self.proc.terminate()
+                    self.proc.wait(timeout=0.8)
+                except subprocess.TimeoutExpired:
+                    try:
+                        self.proc.kill()
+                        self.proc.wait(timeout=0.8)
+                    except Exception:
+                        pass
+                except Exception:
+                    try:
+                        self.proc.kill()
+                    except Exception:
+                        pass
+
+            try:
+                if self.proc.stdout and not self.proc.stdout.closed:
+                    self.proc.stdout.close()
+            except Exception:
+                pass
+            try:
+                if self.proc.stderr and not self.proc.stderr.closed:
+                    self.proc.stderr.close()
+            except Exception:
+                pass
         if self._spawn_binary_path is not None:
             try:
                 self._spawn_binary_path.unlink(missing_ok=True)
@@ -338,7 +365,12 @@ def obs_to_tensors(obs: dict, labels: Optional[dict] = None) -> dict:
     token_mask = torch.zeros((1, len(tokens)), dtype=torch.bool)
 
     # Legal action features [1, A, ACTION_FEAT_DIM]
-    action_feats, action_mask = encode_legal_actions(obs['legal_actions'])
+    action_feats, action_mask = encode_legal_actions(
+        obs['legal_actions'],
+        phase_name=obs.get("phase", ""),
+        pass_selection_indices=obs.get("pass_selection_indices", []),
+        pass_selection_target=obs.get("pass_selection_target", 4),
+    )
 
     # Hidden-hand supervision targets (relative opponents: left, partner, right).
     hidden_target = torch.zeros((1, 3, NUM_CARDS), dtype=torch.float32)
@@ -362,6 +394,12 @@ def obs_to_tensors(obs: dict, labels: Optional[dict] = None) -> dict:
         obs.get('possible_bitmasks', [[False] * NUM_CARDS for _ in range(3)]),
         dtype=torch.float32
     ).unsqueeze(0)
+    hidden_known = torch.tensor(
+        obs.get('confirmed_bitmasks', [[False] * NUM_CARDS for _ in range(3)]),
+        dtype=torch.float32
+    ).unsqueeze(0)
+    # Keep known cards feasible even if upstream possible-masks lag behind constraints.
+    hidden_possible = torch.maximum(hidden_possible, hidden_known)
 
     return {
         'obs_a': obs_a,
@@ -371,6 +409,7 @@ def obs_to_tensors(obs: dict, labels: Optional[dict] = None) -> dict:
         'action_mask': action_mask,
         'hidden_target': hidden_target,
         'hidden_possible': hidden_possible,
+        'hidden_known': hidden_known,
     }
 
 
@@ -401,11 +440,34 @@ def encode_phase(phase_name: str) -> torch.Tensor:
     return F.one_hot(torch.tensor([idx]), 5).float()
 
 
-def encode_legal_actions(legal: list[dict]) -> tuple[torch.Tensor, torch.Tensor]:
+def encode_legal_actions(
+    legal: list[dict],
+    phase_name: str = "",
+    pass_selection_indices: list[int] | None = None,
+    pass_selection_target: int = 4,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Encode legal actions as [1, A, ACTION_FEAT_DIM] feature tensors."""
     A = max(len(legal), 1)
     feats = torch.zeros((1, A, ACTION_FEAT_DIM))
     mask = torch.ones((1, A), dtype=torch.bool)  # True = ignored
+    pass_phase = str(phase_name)
+    pass_is_forth = 1.0 if pass_phase == "PassingForth" else 0.0
+    pass_is_back = 1.0 if pass_phase == "PassingBack" else 0.0
+    selected_cards = [
+        int(c) for c in (pass_selection_indices or [])
+        if isinstance(c, int) and 0 <= int(c) < NUM_CARDS
+    ]
+    pass_target = max(1, int(pass_selection_target or 4))
+    selected_count = min(len(selected_cards), pass_target)
+    remaining_count = max(0, pass_target - selected_count)
+    selected_suit_hist = torch.zeros(4)
+    selected_val_hist = torch.zeros(9)
+    for c in selected_cards:
+        selected_suit_hist[c // 9] += 1.0
+        selected_val_hist[c % 9] += 1.0
+    hist_denom = float(max(1, pass_target))
+    selected_suit_hist /= hist_denom
+    selected_val_hist /= hist_denom
 
     # Action type one-hot: 15 types
     ACTION_TOKENS = {
@@ -461,6 +523,20 @@ def encode_legal_actions(legal: list[dict]) -> tuple[torch.Tensor, torch.Tensor]
         # Bid value [32] (normalized)
         if la.get('bid_value') is not None:
             feats[0, i, 32] = (la['bid_value'] - 120) / 300.0
+
+        # Passing context features [69..86] to avoid sequential-pass aliasing:
+        # - role asymmetry (forth/back),
+        # - current selection progress,
+        # - selected-card suit/value composition so token-52 picks are conditioned
+        #   on what has already been selected.
+        if tok in (43, 52):
+            feats[0, i, 69] = pass_is_forth
+            feats[0, i, 70] = pass_is_back
+            feats[0, i, 71] = selected_count / 4.0
+            feats[0, i, 72] = min(1.0, pass_target / 4.0)
+            feats[0, i, 73] = remaining_count / 4.0
+            feats[0, i, 74:78] = selected_suit_hist
+            feats[0, i, 78:87] = selected_val_hist
 
     return feats, mask  # [1, A, ACTION_FEAT_DIM], [1, A]
 

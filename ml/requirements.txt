@@ -1,3 +1,2 @@
-aiohttp
-websockets
-# torch is installed via ml/install_torch.py to select a CUDA-capable build when available
+# Legacy shim for older workflows.
+-r ../requirements.txt

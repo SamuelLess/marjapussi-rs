@@ -46,6 +46,30 @@ class EnvRewardBasicsTest(unittest.TestCase):
         self.assertEqual(float(feats[0, 0, 15 + (17 // 9)]), 1.0)
         self.assertEqual(float(feats[0, 0, 19 + (17 % 9)]), 1.0)
 
+    def test_pass_pick_action_gets_phase_and_selection_context(self):
+        legal = [{
+            "action_token": 52,
+            "card_idx": 12,
+            "pass_cards": None,
+            "suit_idx": None,
+            "bid_value": None,
+        }]
+        feats, _ = encode_legal_actions(
+            legal,
+            phase_name="PassingBack",
+            pass_selection_indices=[0, 9],
+            pass_selection_target=4,
+        )
+        # Asymmetry flag: backpass vs forthpass
+        self.assertEqual(float(feats[0, 0, 69]), 0.0)
+        self.assertEqual(float(feats[0, 0, 70]), 1.0)
+        # Progress: 2 selected out of 4, 2 remaining
+        self.assertAlmostEqual(float(feats[0, 0, 71]), 0.5, places=6)
+        self.assertAlmostEqual(float(feats[0, 0, 73]), 0.5, places=6)
+        # Suit histogram sees one card in suit 0 and one in suit 1
+        self.assertAlmostEqual(float(feats[0, 0, 74]), 0.25, places=6)
+        self.assertAlmostEqual(float(feats[0, 0, 75]), 0.25, places=6)
+
     def test_contract_reward_passgame_and_contract_mode(self):
         cfg = RewardConfig()
         passgame_info = {"team_points": [160, 120], "tricks": []}

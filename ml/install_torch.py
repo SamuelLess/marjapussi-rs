@@ -42,20 +42,22 @@ def detect_cuda_version_from_nvidia_smi() -> str | None:
 
 def default_channels(cuda_version: str | None) -> list[str]:
     if cuda_version is None:
-        return ["cu128", "cu126", "cu124"]
+        return ["cu128", "cu126", "cu124", "cu121", "cu118"]
     try:
         major, minor = cuda_version.split(".")
         key = int(major) * 10 + int(minor)
     except Exception:
-        return ["cu128", "cu126", "cu124"]
+        return ["cu128", "cu126", "cu124", "cu121", "cu118"]
 
     if key >= 128:
-        return ["cu128", "cu126", "cu124"]
+        return ["cu128", "cu126", "cu124", "cu121", "cu118"]
     if key >= 126:
-        return ["cu126", "cu124", "cu121"]
+        return ["cu126", "cu124", "cu121", "cu118"]
     if key >= 124:
-        return ["cu124", "cu121"]
-    return ["cu121"]
+        return ["cu124", "cu121", "cu118"]
+    if key >= 121:
+        return ["cu121", "cu118"]
+    return ["cu118", "cu121"]
 
 
 def requested_channels(cuda_version: str | None) -> list[str]:

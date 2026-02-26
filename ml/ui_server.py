@@ -10,7 +10,11 @@ import argparse
 import asyncio
 import json
 import math
+import os
+import signal
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -80,12 +84,56 @@ def rel_hidden_abs_seat(pov_abs_seat: int, rel_hidden_idx: int) -> int:
     return (pov_abs_seat + rel_hidden_idx + 1) % 4
 
 
-def rank_possible_cards(row: list[float], possible_row: list[bool], want: int) -> list[int]:
-    """Rank cards by probability, constrained to currently possible cards."""
-    want = max(0, want)
-    candidates = [i for i in range(36) if bool(possible_row[i])]
-    ranked = sorted(candidates, key=lambda i: row[i], reverse=True)
-    return ranked[:want]
+def assign_hidden_cards_unique(
+    probs: list[list[float]],
+    possible: list[list[bool]],
+    wants: list[int],
+) -> list[list[int]]:
+    """
+    Build a set-theory-consistent hidden-hand assignment:
+    - each card can be assigned to at most one hidden seat
+    - each seat receives up to its cards-remaining target
+    - only currently possible cards may be assigned
+    """
+    n_seats = min(3, len(probs), len(possible), len(wants))
+    if n_seats <= 0:
+        return []
+
+    wants = [max(0, int(wants[i])) for i in range(n_seats)]
+    assigned_cards: set[int] = set()
+    seat_cards: list[list[int]] = [[] for _ in range(n_seats)]
+
+    candidates: list[tuple[float, int, int]] = []
+    for s in range(n_seats):
+        for c in range(36):
+            if bool(possible[s][c]):
+                candidates.append((float(probs[s][c]), s, c))
+    candidates.sort(key=lambda t: t[0], reverse=True)
+
+    # Greedy global pass: best high-confidence card-seat pairs first.
+    for p, s, c in candidates:
+        if c in assigned_cards:
+            continue
+        if len(seat_cards[s]) >= wants[s]:
+            continue
+        assigned_cards.add(c)
+        seat_cards[s].append(c)
+
+    # Fill remaining seat quotas with best available cards for that seat.
+    for s in range(n_seats):
+        if len(seat_cards[s]) >= wants[s]:
+            continue
+        ranked = sorted(
+            [c for c in range(36) if bool(possible[s][c]) and c not in assigned_cards],
+            key=lambda c: float(probs[s][c]),
+            reverse=True,
+        )
+        need = wants[s] - len(seat_cards[s])
+        for c in ranked[:need]:
+            assigned_cards.add(c)
+            seat_cards[s].append(c)
+
+    return seat_cards
 
 
 @dataclass
@@ -392,6 +440,12 @@ class GameManager:
         probs = torch.sigmoid(card_logits[0]).tolist()  # [3][36]
         cards_remaining = seat_obs.get("cards_remaining", [0, 0, 0, 0])
         possible = seat_obs.get("possible_bitmasks", [[False] * 36 for _ in range(3)])
+        wants = []
+        for rel in range(3):
+            idx = rel + 1
+            want = int(cards_remaining[idx]) if idx < len(cards_remaining) else 0
+            wants.append(max(0, min(9, want)))
+        assigned = assign_hidden_cards_unique(probs=probs, possible=possible, wants=wants)
         seats = ["left", "partner", "right"]
         summary: dict[str, Any] = {}
 
@@ -402,9 +456,7 @@ class GameManager:
 
         for rel in range(3):
             row = probs[rel]
-            want = int(cards_remaining[rel + 1]) if rel + 1 < len(cards_remaining) else 0
-            want = max(0, min(9, want))
-            ranked = rank_possible_cards(row, possible[rel], want)
+            ranked = assigned[rel] if rel < len(assigned) else []
             abs_seat = rel_hidden_abs_seat(seat, rel)
             truth = set(all_hands[abs_seat]) if abs_seat < len(all_hands) else set()
 
@@ -714,11 +766,14 @@ class GameManager:
 
                 predicted_hands = {}
                 impossible_mass = {}
+                wants = []
                 for rel_opp in range(3):
                     want = int(cards_remaining[rel_opp + 1]) if (rel_opp + 1) < len(cards_remaining) else 0
-                    want = max(0, min(9, want))
+                    wants.append(max(0, min(9, want)))
+                assigned = assign_hidden_cards_unique(probs=probs, possible=possible, wants=wants)
+                for rel_opp in range(3):
                     row = probs[rel_opp]
-                    ranked = rank_possible_cards(row, possible[rel_opp], want)
+                    ranked = assigned[rel_opp] if rel_opp < len(assigned) else []
                     predicted_hands[str(rel_opp + 1)] = ranked
 
                     imp_vals = [row[i] for i in range(36) if not bool(possible[rel_opp][i])]
@@ -770,26 +825,60 @@ class GameManager:
 
 game: Optional[GameManager] = None
 clients: set[web.WebSocketResponse] = set()
+_shutdown_requested = False
+
+
+def _install_fast_signal_fallback(timeout_s: float = 2.0) -> None:
+    """
+    Ensure Ctrl+C cannot leave the process hanging indefinitely.
+    First signal triggers normal shutdown and arms a hard-exit timer.
+    """
+    def _on_signal(signum, _frame):
+        global _shutdown_requested
+        if _shutdown_requested:
+            os._exit(130)
+        _shutdown_requested = True
+
+        def _force_exit():
+            time.sleep(timeout_s)
+            os._exit(130)
+
+        t = threading.Thread(target=_force_exit, daemon=True)
+        t.start()
+        raise KeyboardInterrupt
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, _on_signal)
+        except Exception:
+            pass
 
 
 async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     clients.add(ws)
-
-    if game is not None and game.obs is not None:
-        await ws.send_str(json.dumps(game.game_message()))
-
-    async for msg in ws:
-        if msg.type == aiohttp.WSMsgType.TEXT:
+    try:
+        if game is not None and game.obs is not None and not ws.closed:
             try:
-                await handle(ws, json.loads(msg.data))
-            except Exception as e:
-                await ws.send_str(json.dumps({"type": "error", "message": str(e)}))
-        elif msg.type == aiohttp.WSMsgType.ERROR:
-            break
+                await ws.send_str(json.dumps(game.game_message()))
+            except Exception:
+                return ws
 
-    clients.discard(ws)
+        async for msg in ws:
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                try:
+                    await handle(ws, json.loads(msg.data))
+                except Exception as e:
+                    if not ws.closed:
+                        try:
+                            await ws.send_str(json.dumps({"type": "error", "message": str(e)}))
+                        except Exception:
+                            break
+            elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED):
+                break
+    finally:
+        clients.discard(ws)
     return ws
 
 
@@ -858,6 +947,9 @@ async def broadcast() -> None:
     msg = json.dumps(game.game_message())
     dead: set[web.WebSocketResponse] = set()
     for c in clients:
+        if c.closed:
+            dead.add(c)
+            continue
         try:
             await c.send_str(msg)
         except Exception:
@@ -931,7 +1023,19 @@ def main() -> None:
     print(f"\nMarjapussi UI -> http://localhost:{args.port}")
     print(f"PyTorch: {'yes' if TORCH_OK else 'no (heuristic mode)'}")
     print()
-    web.run_app(app, port=args.port, print=False)
+    _install_fast_signal_fallback(timeout_s=2.0)
+    try:
+        # Keep Ctrl+C shutdown responsive for local iterative workflows.
+        web.run_app(
+            app,
+            port=args.port,
+            print=False,
+            shutdown_timeout=1.0,
+            keepalive_timeout=1.0,
+            handle_signals=False,
+        )
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":

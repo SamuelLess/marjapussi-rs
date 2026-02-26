@@ -31,6 +31,24 @@ class UiServerSmokeTest(unittest.TestCase):
         self.assertEqual(ui_server.rel_hidden_abs_seat(0, 2), 3)
         self.assertEqual(ui_server.rel_hidden_abs_seat(3, 0), 0)
 
+    def test_hidden_assignment_is_unique_and_possible(self):
+        probs = [
+            [0.9] + [0.01] * 35,
+            [0.8] + [0.7] + [0.01] * 34,
+            [0.6] + [0.5] + [0.4] + [0.01] * 33,
+        ]
+        possible = [[False] * 36 for _ in range(3)]
+        for s in range(3):
+            for c in range(3):
+                possible[s][c] = True
+        assigned = ui_server.assign_hidden_cards_unique(probs, possible, wants=[1, 1, 1])
+        flat = [c for seat_cards in assigned for c in seat_cards]
+        self.assertEqual(len(flat), 3)
+        self.assertEqual(len(set(flat)), 3)
+        for s, seat_cards in enumerate(assigned):
+            for c in seat_cards:
+                self.assertTrue(possible[s][c])
+
     def test_game_manager_controller_payload_shape(self):
         gm = ui_server.GameManager(checkpoint=None)
         payload = gm.controller_payload()

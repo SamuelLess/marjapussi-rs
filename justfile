@@ -13,12 +13,24 @@ cuda_alloc_env := if os == "windows" { "" } else { "PYTORCH_CUDA_ALLOC_CONF=expa
 ensure-venv:
     @if [ ! -f ".venv/Scripts/python.exe" ] && [ ! -f ".venv/bin/python" ]; then \
         echo "Creating virtual environment at .venv"; \
-        if command -v python >/dev/null 2>&1; then \
-            python -m venv .venv; \
+        if command -v py >/dev/null 2>&1; then \
+            selected=""; \
+            for v in 3.13 3.12 3.11 3.10 3.9; do \
+                if py -$$v -c "import sys; print(sys.version)" >/dev/null 2>&1; then \
+                    selected="$$v"; \
+                    break; \
+                fi; \
+            done; \
+            if [ -n "$$selected" ]; then \
+                echo "Using Python $$selected via py launcher"; \
+                py -$$selected -m venv .venv; \
+            else \
+                py -3 -m venv .venv; \
+            fi; \
         elif command -v python3 >/dev/null 2>&1; then \
             python3 -m venv .venv; \
-        elif command -v py >/dev/null 2>&1; then \
-            py -3 -m venv .venv; \
+        elif command -v python >/dev/null 2>&1; then \
+            python -m venv .venv; \
         else \
             echo "No Python interpreter found in PATH."; \
             exit 1; \
@@ -75,9 +87,9 @@ build-human-dataset input="ml/dataset/games.ndjson" output="ml/data/human_datase
     {{ml_convert_bin}} --input {{input}} --output {{output}}
 
 # Supervised pretraining on converted human data.
-pretrain-human data="ml/data/human_dataset.ndjson" epochs="4" max_steps="512" checkpoints_dir="ml/checkpoints":
+pretrain-human data="ml/data/human_dataset.ndjson" epochs="8" max_steps="2048" checkpoints_dir="ml/checkpoints":
     @echo "Pretraining from human dataset {{data}} using virtual environment python: {{python}}"
-    {{python}} ml/train_from_dataset.py --data {{data}} --epochs {{epochs}} --batch 1024 --workers 4 --device cuda --max-steps {{max_steps}} --checkpoints-dir {{checkpoints_dir}}
+    {{python}} ml/train_from_dataset.py --data {{data}} --epochs {{epochs}} --batch 1024 --workers 4 --device cuda --max-steps {{max_steps}} --bid-weight 2.0 --pass-weight 2.5 --checkpoints-dir {{checkpoints_dir}}
 
 # Train the model with 512 rounds, 128 games per round, and checkpoint every 16 rounds (total 65,536 games)
 train-65k run_name="scratch_65k": setup-ml
@@ -109,13 +121,10 @@ train-4k run_name="scratch_4k": setup-ml
       echo "Isolated run root: $$run_root"; \
       ML_SERVER_BIN="$$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 64 --games-per-round 64 --workers 16 --mc-rollouts 2 --device cuda --eval-every 8 --ppo-epochs 2 --min-ppo-epochs 1 --max-ppo-epochs 3 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.20 --max-adv-calls-per-episode 2 --checkpoints-dir "$$run_ckpt" --runs-dir "$$run_logs" --named-checkpoint "$$run_label"_selfplay_final.pt
 
-# Alias for explicit scratch baseline naming.
-train-65k-scratch: train-65k
-
-# Human-first training profile:
-# 1) convert legacy logs, 2) supervised warm-start (~50% upfront step budget), 3) RL fine-tune.
-train-65k-human run_name="human_first_65k": setup-ml build-human-dataset
-    @echo "Running human pretraining warm-start (max_steps=512) before RL fine-tune..."
+# Human-first 4k profile:
+# 1) convert legacy logs, 2) supervised warm-start, 3) 64x64 (4,096 games) RL self-play.
+train-4k-human run_name="human_smoke_4k": setup-ml build-human-dataset
+    @echo "Running stronger human pretraining warm-start (max_steps=3072) before 4k RL run..."
     @run_label="{{run_name}}"; \
       case "$$run_label" in run_name=*) run_label="$${run_label#run_name=}" ;; esac; \
       run_root="ml/runs/$$run_label"; \
@@ -125,7 +134,32 @@ train-65k-human run_name="human_first_65k": setup-ml build-human-dataset
       run_bin="$$run_bin_dir/$$(basename "{{ml_server_bin}}")"; \
       mkdir -p "$$run_ckpt" "$$run_logs" "$$run_bin_dir"; \
       cp -f "{{ml_server_bin}}" "$$run_bin"; \
-      {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 4 --batch 1024 --workers 4 --device cuda --max-steps 512 --checkpoints-dir "$$run_ckpt"; \
+      {{cuda_alloc_env}} {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 10 --batch 256 --workers 2 --device cuda --max-steps 3072 --bid-weight 2.0 --pass-weight 2.5 --checkpoints-dir "$$run_ckpt"; \
+      cp -f "$$run_ckpt/latest.pt" "$$run_ckpt/$$run_label"_pretrain_final.pt; \
+      echo "Saved pretraining final checkpoint: $$run_ckpt/$$run_label"_pretrain_final.pt; \
+      ML_SERVER_BIN="$$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 64 --games-per-round 64 --workers 16 --mc-rollouts 2 --device cuda --eval-every 8 --checkpoint "$$run_ckpt/$$run_label"_pretrain_final.pt --ppo-epochs 2 --min-ppo-epochs 1 --max-ppo-epochs 3 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.20 --max-adv-calls-per-episode 2 --named-checkpoint "$$run_label"_selfplay_final.pt --checkpoints-dir "$$run_ckpt" --runs-dir "$$run_logs"; \
+      cp -f "$$run_ckpt/best.pt" "$$run_ckpt/$$run_label"_selfplay_best.pt; \
+      echo "Saved self-play final checkpoint: $$run_ckpt/$$run_label"_selfplay_final.pt; \
+      echo "Saved self-play best checkpoint:  $$run_ckpt/$$run_label"_selfplay_best.pt; \
+      echo "Artifacts root: $$run_root"
+
+# Alias for explicit scratch baseline naming.
+train-65k-scratch: train-65k
+
+# Human-first training profile:
+# 1) convert legacy logs, 2) supervised warm-start (~50% upfront step budget), 3) RL fine-tune.
+train-65k-human run_name="human_first_65k": setup-ml build-human-dataset
+    @echo "Running stronger human pretraining warm-start (max_steps=2048) before RL fine-tune..."
+    @run_label="{{run_name}}"; \
+      case "$$run_label" in run_name=*) run_label="$${run_label#run_name=}" ;; esac; \
+      run_root="ml/runs/$$run_label"; \
+      run_ckpt="$$run_root/checkpoints"; \
+      run_logs="$$run_root/logs"; \
+      run_bin_dir="$$run_root/bin"; \
+      run_bin="$$run_bin_dir/$$(basename "{{ml_server_bin}}")"; \
+      mkdir -p "$$run_ckpt" "$$run_logs" "$$run_bin_dir"; \
+      cp -f "{{ml_server_bin}}" "$$run_bin"; \
+      {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 8 --batch 1024 --workers 4 --device cuda --max-steps 2048 --bid-weight 2.0 --pass-weight 2.5 --checkpoints-dir "$$run_ckpt"; \
       cp -f "$$run_ckpt/latest.pt" "$$run_ckpt/$$run_label"_pretrain_final.pt; \
       echo "Saved pretraining final checkpoint: $$run_ckpt/$$run_label"_pretrain_final.pt; \
       ML_SERVER_BIN="$$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 512 --games-per-round 128 --workers 32 --mc-rollouts 4 --device cuda --eval-every 16 --checkpoint "$$run_ckpt/$$run_label"_pretrain_final.pt --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3 --named-checkpoint "$$run_label"_selfplay_final.pt --checkpoints-dir "$$run_ckpt" --runs-dir "$$run_logs"; \
@@ -148,7 +182,7 @@ train-1k-human run_name="human_smoke_1k": setup-ml build-human-dataset
       run_bin="$$run_bin_dir/$$(basename "{{ml_server_bin}}")"; \
       mkdir -p "$$run_ckpt" "$$run_logs" "$$run_bin_dir"; \
       cp -f "{{ml_server_bin}}" "$$run_bin"; \
-      {{cuda_alloc_env}} {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 6 --batch 256 --workers 2 --device cuda --max-steps 1024 --checkpoints-dir "$$run_ckpt"; \
+      {{cuda_alloc_env}} {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 6 --batch 256 --workers 2 --device cuda --max-steps 1024 --bid-weight 2.0 --pass-weight 2.5 --checkpoints-dir "$$run_ckpt"; \
       cp -f "$$run_ckpt/latest.pt" "$$run_ckpt/$$run_label"_pretrain_final.pt; \
       echo "Saved pretraining final checkpoint: $$run_ckpt/$$run_label"_pretrain_final.pt; \
       ML_SERVER_BIN="$$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 32 --games-per-round 32 --workers 8 --mc-rollouts 2 --device cuda --eval-every 8 --checkpoint "$$run_ckpt/$$run_label"_pretrain_final.pt --ppo-epochs 2 --min-ppo-epochs 1 --max-ppo-epochs 3 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.20 --max-adv-calls-per-episode 2 --named-checkpoint "$$run_label"_selfplay_final.pt --checkpoints-dir "$$run_ckpt" --runs-dir "$$run_logs"; \
@@ -218,4 +252,4 @@ ui checkpoint="latest" port="8765": install-ml-deps ensure-ml-server-ui-runtime
       ui_port="{{port}}"; \
       case "$ui_port" in port=*) ui_port="${ui_port#port=}" ;; esac; \
       echo "Starting UI server (http://localhost:$ui_port) with checkpoint=$ui_ckpt ..."; \
-      ML_SERVER_BIN="{{ui_ml_server_bin}}" {{python}} ml/ui_server.py --port "$ui_port" --checkpoint "$ui_ckpt"
+      exec ML_SERVER_BIN="{{ui_ml_server_bin}}" {{python}} ml/ui_server.py --port "$ui_port" --checkpoint "$ui_ckpt"

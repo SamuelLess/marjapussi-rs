@@ -46,6 +46,7 @@ ml/.runtime_bins/
 /*run_bin_dir/
 /*run_ckpt/
 /*run_logs/
+/*run_root/
 
 # Local benchmark/debug dumps
 *.ndjson

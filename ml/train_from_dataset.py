@@ -13,7 +13,10 @@ Usage:
   python ml/train_from_dataset.py --data ml/data/dataset.ndjson --device cuda --batch 1024 --workers 4
 """
 
+from __future__ import annotations
+
 import argparse, json, math, os, random, sys, time
+from functools import partial
 from pathlib import Path
 from torch.utils.data import IterableDataset, DataLoader
 import torch, torch.nn as nn, torch.nn.functional as F
@@ -97,28 +100,43 @@ def worker_init(worker_id):
 
 # ── Collation ─────────────────────────────────────────────────────────────────
 
-def collate(records: list[dict]):
+def collate(records: list[dict], bid_weight: float = 1.0, pass_weight: float = 1.0):
     """Convert a batch of raw records to model tensors. Returns None on empty."""
     valid = []
     for r in records:
         try:
             t = obs_to_tensors(r["obs"])
             a = r.get("action_taken", 0)
+            legal = r.get("obs", {}).get("legal_actions", [])
+            clamped_a = min(a, len(legal) - 1) if legal else 0
             # Prefer MC advantage for chosen action; fall back to outcome pts
             if "chosen_advantage" in r:
                 adv = float(r["chosen_advantage"])
             else:
                 my_pts = r.get("outcome_pts_my_team", 210) / 420.0
                 adv = my_pts * 2.0 - 1.0   # map [0,1] to [-1,1]
-            pts_my  = r.get("outcome_pts_my_team", 210) / 420.0
+            pts_my = r.get("outcome_pts_my_team", 210) / 420.0
             pts_opp = r.get("outcome_pts_opp", 210) / 420.0
-            valid.append((t, a, adv, pts_my, pts_opp))
+
+            # Extra supervised emphasis on bidding and pass-pick actions.
+            w = 1.0
+            feats = t["action_feats"]
+            if feats.shape[1] > 0:
+                idx = max(0, min(clamped_a, int(feats.shape[1]) - 1))
+                chosen = feats[0, idx]
+                is_bid = float(chosen[1].item()) > 0.5
+                is_pass = (float(chosen[3].item()) > 0.5) or (float(chosen[11].item()) > 0.5)
+                if is_bid:
+                    w *= max(1.0, float(bid_weight))
+                if is_pass:
+                    w *= max(1.0, float(pass_weight))
+            valid.append((t, clamped_a, adv, pts_my, pts_opp, w))
         except Exception:
             continue
     if not valid:
         return None
 
-    tensors, actions, advs, pts_my, pts_opp = zip(*valid)
+    tensors, actions, advs, pts_my, pts_opp, phase_boost = zip(*valid)
     B = len(tensors)
 
     max_seq = max(t["token_ids"].shape[1] for t in tensors)
@@ -141,13 +159,20 @@ def collate(records: list[dict]):
         af[i, :A] = t["action_feats"][0]
         am[i, :A] = t["action_mask"][0]
 
-    ai = torch.tensor([min(a, tensors[i]["action_feats"].shape[1]-1) for i, a in enumerate(actions)], dtype=torch.long)
+    ai = torch.tensor(
+        [min(a, tensors[i]["action_feats"].shape[1] - 1) for i, a in enumerate(actions)],
+        dtype=torch.long,
+    )
     return {
-        "obs_a": obs_a, "token_ids": tok, "token_mask": tok_mask,
-        "action_feats": af, "action_mask": am,
+        "obs_a": obs_a,
+        "token_ids": tok,
+        "token_mask": tok_mask,
+        "action_feats": af,
+        "action_mask": am,
         "action_idx": ai,
         "advantage": torch.tensor(advs, dtype=torch.float32),
         "pts_target": torch.tensor([[pm, po] for pm, po in zip(pts_my, pts_opp)]),
+        "phase_boost": torch.tensor(phase_boost, dtype=torch.float32),
     }
 
 
@@ -156,6 +181,7 @@ def collate(records: list[dict]):
 def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
           device: str = "cpu", ckpt: str | None = None, workers: int = 4,
           log_every: int = 500, amp: bool = True, max_steps: int = 0,
+          bid_weight: float = 1.0, pass_weight: float = 1.0,
           checkpoints_dir: str | Path = DEFAULT_CKPT_DIR):
     configure_torch_runtime(device=device, workers=workers)
     ckpt_dir = Path(checkpoints_dir)
@@ -164,6 +190,9 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
     model = MarjapussiNet().to(device)
     Log.success(
         f"Supervised pretraining | epochs={epochs} | batch={batch} | workers={workers} | device={device}"
+    )
+    Log.info(
+        f"Phase/action emphasis: bid_weight={bid_weight:.2f}, pass_weight={pass_weight:.2f}"
     )
     Log.info(f"Model params: {model.param_count():,}")
     if ckpt and Path(ckpt).exists():
@@ -191,7 +220,8 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
     for epoch in range(epochs):
         Log.phase(f"Epoch {epoch+1}/{epochs}: Pretraining")
         ds = NdJsonDataset(data_path, shuffle_buf=min(100_000, batch * 200), epochs=1)
-        loader = DataLoader(ds, batch_size=batch, collate_fn=collate,
+        collate_fn = partial(collate, bid_weight=bid_weight, pass_weight=pass_weight)
+        loader = DataLoader(ds, batch_size=batch, collate_fn=collate_fn,
                             num_workers=workers, worker_init_fn=worker_init,
                             pin_memory=(device != "cpu"),
                             prefetch_factor=2 if workers > 0 else None,
@@ -226,6 +256,9 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
                 chosen_lp = log_p.gather(1, ai.unsqueeze(1)).squeeze(1)
                 # Advantage-weighted BC: good moves get stronger gradient
                 weights = F.relu(adv) + 0.1   # always >= 0.1 to learn from all moves
+                phase_boost = batch_data.get("phase_boost")
+                if phase_boost is not None:
+                    weights = weights * phase_boost.to(device, non_blocking=True)
                 bc_loss = -(chosen_lp * weights).mean()
 
                 # Points regression (auxiliary)
@@ -300,6 +333,10 @@ if __name__ == "__main__":
     p.add_argument("--log-every", type=int,  default=500)
     p.add_argument("--max-steps", type=int, default=0,
                    help="Optional hard cap on optimizer steps (0 = disabled)")
+    p.add_argument("--bid-weight", type=float, default=1.0,
+                   help="Extra supervised emphasis multiplier for bidding actions")
+    p.add_argument("--pass-weight", type=float, default=1.0,
+                   help="Extra supervised emphasis multiplier for passing/pick-pass-card actions")
     p.add_argument("--no-amp",   action="store_true",         help="Disable mixed precision")
     p.add_argument("--checkpoints-dir", default=str(DEFAULT_CKPT_DIR),
                    help="Directory for pretraining checkpoints")
@@ -316,4 +353,5 @@ if __name__ == "__main__":
           lr=args.lr, device=args.device, ckpt=args.checkpoint,
           workers=args.workers, log_every=args.log_every,
           amp=not args.no_amp, max_steps=args.max_steps,
+          bid_weight=args.bid_weight, pass_weight=args.pass_weight,
           checkpoints_dir=args.checkpoints_dir)

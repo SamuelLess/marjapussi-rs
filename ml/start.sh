@@ -31,7 +31,7 @@ fi
 echo ""
 echo "=== 2. Installing Python dependencies ==="
 "$VPY" -m pip install --upgrade pip
-"$VPY" -m pip install -q -r "$ROOT/requirements.txt" -r "$ML/requirements.txt"
+"$VPY" -m pip install -q -e "$ROOT[dev]"
 "$VPY" "$ML/install_torch.py"
 
 echo ""

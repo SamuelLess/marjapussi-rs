@@ -12,7 +12,10 @@ use marjapussi::game::gameinfo::GameFinishedInfo;
 use marjapussi::game::gamestate::GamePhase;
 use marjapussi::game::player::PlaceAtTable;
 use marjapussi::game::Game;
-use marjapussi::ml::observation::{build_observation, ObservationJson};
+use marjapussi::ml::observation::{build_observation, card_index, ObservationJson};
+use marjapussi::ml::pass_selection::{
+    build_pick_legal_actions, collect_pass_options, PASS_PICK_TARGET,
+};
 
 #[derive(Debug, Deserialize)]
 struct LegacyGameRecord {
@@ -354,6 +357,68 @@ fn record_decision(game: &Game, action: &GameAction) -> Result<DecisionPoint, St
     })
 }
 
+fn record_pass_pick_decisions(game: &Game, pass_action: &GameAction) -> Result<Vec<DecisionPoint>, String> {
+    let pass_cards = match &pass_action.action_type {
+        ActionType::Pass(cards) => cards.clone(),
+        _ => return Err("record_pass_pick_decisions expects ActionType::Pass".to_string()),
+    };
+    if game.state.player_at_turn != pass_action.player {
+        return Err(format!(
+            "pass action player {:?} does not match player_at_turn {:?}",
+            pass_action.player, game.state.player_at_turn
+        ));
+    }
+
+    let pass_options = collect_pass_options(game);
+    if pass_options.is_empty() {
+        return Err("no pass options available while trying to record pass picks".to_string());
+    }
+
+    // Proxy ordering as requested: pick highest -> lowest card from chosen 4-card set.
+    // parse_pass_action already normalizes pass cards into descending sorted order.
+    let ordered_pick_cards: Vec<usize> = pass_cards.iter().map(card_index).collect();
+    let mut selected: Vec<usize> = vec![];
+    let mut decisions = Vec::with_capacity(PASS_PICK_TARGET);
+
+    for card_idx in ordered_pick_cards {
+        let legal_pick_actions = build_pick_legal_actions(&pass_options, &selected);
+        if legal_pick_actions.is_empty() {
+            return Err("empty pass-pick legal actions during sequential pass reconstruction".to_string());
+        }
+        let action_idx = legal_pick_actions
+            .iter()
+            .position(|la| la.card_idx == Some(card_idx))
+            .ok_or_else(|| {
+                let cands: Vec<String> = legal_pick_actions
+                    .iter()
+                    .filter_map(|la| la.card_idx)
+                    .map(|c| c.to_string())
+                    .collect();
+                format!(
+                    "chosen pass card {card_idx} not in sequential pick candidates [{}]",
+                    cands.join(",")
+                )
+            })?;
+
+        let mut obs = ObservationJson::from(build_observation(game, pass_action.player.clone()));
+        obs.legal_actions = legal_pick_actions;
+        obs.pass_selection_indices = selected.clone();
+        obs.pass_selection_target = PASS_PICK_TARGET;
+
+        decisions.push(DecisionPoint {
+            obs,
+            action_idx,
+            pov_parity: pass_action.player.0 % 2,
+        });
+
+        selected.push(card_idx);
+        selected.sort_unstable();
+        selected.dedup();
+    }
+
+    Ok(decisions)
+}
+
 fn illegal_action_error(game: &Game, action: &GameAction) -> String {
     let legal_preview: Vec<String> = game
         .legal_actions
@@ -386,7 +451,8 @@ fn replay_legacy_game(record: &LegacyGameRecord) -> Result<Vec<serde_json::Value
             ));
         }
         let pass_action = parse_pass_action(pass_collect)?;
-        decisions.push(record_decision(game, &pass_action)?);
+        let pick_decisions = record_pass_pick_decisions(game, &pass_action)?;
+        decisions.extend(pick_decisions);
         game.apply_action_mut(pass_action);
         pass_collect.clear();
         Ok(())
@@ -604,6 +670,39 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use marjapussi::game::gameevent::GameAction;
+    use marjapussi::game::points::Points;
+
+    fn build_game_in_passing_forth() -> Game {
+        let names = [
+            "S1".to_string(),
+            "S2".to_string(),
+            "S3".to_string(),
+            "S4".to_string(),
+        ];
+        let mut game = Game::new("legacy_test".to_string(), names, None);
+        let mut actions = game.legal_actions.clone();
+        for _ in 0..4 {
+            game = game.apply_action(actions.pop().expect("start action")).expect("start apply");
+            actions = game.legal_actions.clone();
+        }
+        let bid140 = GameAction {
+            action_type: ActionType::NewBid(140),
+            player: game.state.player_at_turn.clone(),
+        };
+        game = game.apply_action(bid140).expect("bid apply");
+        for _ in 0..4 {
+            actions = game.legal_actions.clone();
+            game = game.apply_action(actions[3].clone()).expect("bidding continue");
+        }
+        for _ in 0..3 {
+            actions = game.legal_actions.clone();
+            game = game.apply_action(actions[0].clone()).expect("bidding stop");
+        }
+        assert_eq!(game.state.value, Points(200));
+        assert_eq!(game.state.phase, GamePhase::PassingForth);
+        game
+    }
 
     #[test]
     fn test_parse_card_token() {
@@ -632,6 +731,26 @@ mod tests {
         match action.action_type {
             ActionType::Pass(cards) => assert_eq!(cards.len(), 4),
             _ => panic!("expected pass action"),
+        }
+    }
+
+    #[test]
+    fn test_record_pass_pick_decisions_builds_four_sequential_picks() {
+        let game = build_game_in_passing_forth();
+        let pass_action = game.legal_actions[0].clone();
+        let rows = record_pass_pick_decisions(&game, &pass_action).expect("record pass picks");
+        assert_eq!(rows.len(), PASS_PICK_TARGET);
+        for (idx, dp) in rows.iter().enumerate() {
+            assert_eq!(dp.obs.pass_selection_indices.len(), idx);
+            assert_eq!(dp.obs.pass_selection_target, PASS_PICK_TARGET);
+            assert!(
+                dp.obs.legal_actions.iter().all(|la| la.action_token == 52),
+                "all legal actions should be sequential pass pick token"
+            );
+            assert!(
+                dp.action_idx < dp.obs.legal_actions.len(),
+                "action_idx should point into synthetic pick legal actions"
+            );
         }
     }
 }

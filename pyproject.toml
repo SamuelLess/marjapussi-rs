@@ -7,11 +7,20 @@ name = "marjapussi-ml-tools"
 version = "0.1.0"
 description = "Python tooling for Marjapussi ML training and UI."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9,<3.14"
 dependencies = [
     "numpy",
     "aiohttp",
     "websockets",
+    "tomli>=2.0.1; python_version < '3.11'",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 
 [project.optional-dependencies]

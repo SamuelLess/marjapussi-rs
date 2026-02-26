@@ -52,6 +52,8 @@ Notes:
 
 1. `just ui` now uses an isolated Rust build at `target/ui_runtime`, so training can keep running in parallel.
 2. If you accidentally pass `checkpoint=...` / `port=...` as literal values, `just ui` normalizes them.
+3. Python dependencies are managed via `pyproject.toml` (`pip install -e ".[dev]"`), and `ml/install_torch.py` selects a CUDA-capable torch build when available.
+4. Supported Python targets for ML tooling are 3.9 through 3.13.
 
 UI notes:
 

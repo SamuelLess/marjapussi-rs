@@ -16,9 +16,15 @@ Recommended starting point:
   python ml/train_online.py --rounds 100 --games-per-round 200 --workers 8 --mc-rollouts 4 --device cuda
 """
 
+from __future__ import annotations
+
 import argparse, collections, json, math, os, random, sys, threading, time, warnings, uuid
-import tomllib
 import ctypes
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 # Prevent Windows from going to sleep during multi-day runs
 if sys.platform == "win32":
@@ -112,6 +118,12 @@ def _is_bidding_action(legal: list[dict]) -> bool:
 def _is_passing_action(legal: list[dict]) -> bool:
     return bool(legal and legal[0].get("action_token") in (43, 52))
 
+def _is_info_action(legal: list[dict]) -> bool:
+    if not legal:
+        return False
+    # Trump/Q&A family (ask/answer/announce)
+    return any(la.get("action_token") in (44, 45, 46, 47, 48, 49, 50) for la in legal)
+
 
 def atomic_torch_save(state_dict: dict, path: Path, retries: int = 5, delay_s: float = 0.05) -> None:
     """
@@ -155,6 +167,8 @@ def run_episode(
     adv_query_mode: str = "target",
     adv_non_target_prob: float = 0.0,
     max_adv_calls_per_episode: int = 1,
+    max_pass_adv_calls_per_episode: int = 4,
+    max_info_adv_calls_per_episode: int = 2,
     reward_cfg: RewardConfig = RewardConfig(),
 ) -> list[Transition]:
     """
@@ -168,6 +182,8 @@ def run_episode(
     t_step_total = 0.0
     t_adv_total = 0.0
     n_adv_calls = 0
+    n_pass_adv_calls = 0
+    n_info_adv_calls = 0
 
     try:
         episode_pov = pov if pov is not None else (random.randrange(4) if stage >= 1 else 0)
@@ -192,6 +208,7 @@ def run_episode(
 
             is_bid = _is_bidding_action(legal)
             is_pass = _is_passing_action(legal)
+            is_info = _is_info_action(legal)
             action_pos = 0
 
             if controls_turn:
@@ -219,10 +236,16 @@ def run_episode(
                     elif start_trick == 0:
                         is_target = is_pass
                     else:
-                        is_target = (trick_no == start_trick) and not is_bid and not is_pass
+                        is_target = ((trick_no == start_trick) and not is_bid and not is_pass) or is_info
 
                     should_query = False
-                    if n_adv_calls < max_adv_calls_per_episode:
+                    if is_pass:
+                        can_query_adv = n_pass_adv_calls < max_pass_adv_calls_per_episode
+                    elif is_info:
+                        can_query_adv = n_info_adv_calls < max_info_adv_calls_per_episode
+                    else:
+                        can_query_adv = n_adv_calls < max_adv_calls_per_episode
+                    if can_query_adv:
                         if adv_query_mode == "all":
                             should_query = True
                         elif adv_query_mode == "stochastic":
@@ -243,6 +266,10 @@ def run_episode(
                             pass
                         t_adv_total += time.perf_counter() - t0_adv
                         n_adv_calls += 1
+                        if is_pass:
+                            n_pass_adv_calls += 1
+                        if is_info:
+                            n_info_adv_calls += 1
 
                 pending = Transition(
                     obs=t_before,
@@ -280,7 +307,7 @@ def run_episode(
             Log.sim(
                 f"Episode stats: {steps} steps | "
                 f"StepAvg: {avg_step:.1f}ms | "
-                f"AdvCalls: {n_adv_calls} | "
+                f"AdvCalls: {n_adv_calls} (pass={n_pass_adv_calls},info={n_info_adv_calls}) | "
                 f"BranchingWork: {branch_pct:.1f}%"
             )
 
@@ -396,6 +423,9 @@ def collate(transitions: list[Transition], device: str):
     hidden_possible = torch.cat(
         [t.obs["hidden_possible"] for t in transitions], 0
     ).to(device, non_blocking=True)
+    hidden_known = torch.cat(
+        [t.obs["hidden_known"] for t in transitions], 0
+    ).to(device, non_blocking=True)
 
     return {
         "obs_a":       obs_a,
@@ -411,6 +441,7 @@ def collate(transitions: list[Transition], device: str):
         "pts_target":  torch.tensor([[t.pts_my, t.pts_opp] for t in transitions]).to(device, non_blocking=True),
         "hidden_target": hidden_target,
         "hidden_possible": hidden_possible,
+        "hidden_known": hidden_known,
     }
 
 
@@ -479,9 +510,15 @@ def train_online(
     adv_query_mode: str = "target",
     adv_non_target_prob: float = 0.0,
     max_adv_calls_per_episode: int = 1,
+    max_pass_adv_calls_per_episode: int = 4,
+    max_info_adv_calls_per_episode: int = 2,
+    force_passing_until_progress: float = 0.55,
+    force_bidding_until_progress: float = 0.90,
     hidden_loss_weight: float = 0.3,
     impossible_penalty_weight: float = 2.0,
     hidden_count_weight: float = 0.1,
+    hidden_known_weight: float = 0.5,
+    hidden_exclusive_weight: float = 0.5,
     forced_imitation_weight: float = 0.5,
     forced_imitation_decay_rounds: int = 128,
     named_checkpoint: str | None = None,
@@ -530,12 +567,16 @@ def train_online(
         Log.info(f"Time balancing enabled: target opt/sim ratio={target_opt_sim_ratio:.2f}")
     Log.info(
         f"Adv branching: mode={adv_query_mode}, non_target_prob={adv_non_target_prob:.2f}, "
-        f"max_calls_per_episode={max_adv_calls_per_episode}"
+        f"max_calls_per_episode={max_adv_calls_per_episode}, "
+        f"max_pass_calls_per_episode={max_pass_adv_calls_per_episode}, "
+        f"max_info_calls_per_episode={max_info_adv_calls_per_episode}"
     )
     Log.info(
         f"Hidden-state aux loss: weight={hidden_loss_weight:.2f}, "
         f"impossible_penalty={impossible_penalty_weight:.2f}, "
-        f"count_weight={hidden_count_weight:.2f}"
+        f"count_weight={hidden_count_weight:.2f}, "
+        f"known_weight={hidden_known_weight:.2f}, "
+        f"exclusive_weight={hidden_exclusive_weight:.2f}"
     )
     Log.info(
         f"Forced-action imitation: base_weight={forced_imitation_weight:.2f}, "
@@ -598,8 +639,8 @@ def train_online(
         completed_games = 0
         progress_lock = threading.Lock()
 
-        force_bidding = progress < 0.90
-        force_passing = progress < 0.30
+        force_passing = progress < force_passing_until_progress
+        force_bidding = progress < force_bidding_until_progress
         
         def collect_one(game_idx):
             env = pool_envs.get()
@@ -612,6 +653,8 @@ def train_online(
                                   adv_query_mode=adv_query_mode,
                                   adv_non_target_prob=adv_non_target_prob,
                                   max_adv_calls_per_episode=max_adv_calls_per_episode,
+                                  max_pass_adv_calls_per_episode=max_pass_adv_calls_per_episode,
+                                  max_info_adv_calls_per_episode=max_info_adv_calls_per_episode,
                                   reward_cfg=reward_cfg)
             finally:
                 pool_envs.put(env)
@@ -682,6 +725,8 @@ def train_online(
                     hidden_loss_weight=hidden_loss_weight,
                     impossible_penalty_weight=impossible_penalty_weight,
                     hidden_count_weight=hidden_count_weight,
+                    hidden_known_weight=hidden_known_weight,
+                    hidden_exclusive_weight=hidden_exclusive_weight,
                     forced_imitation_weight=max(
                         0.05,
                         forced_imitation_weight
@@ -761,7 +806,8 @@ def train_online(
         print(f"  - Samples:  {n_trans} transitions")
         print(f"  - OptEpochs:{epoch}")
         print(f"  - Losses:   Total: {avg_loss.get('total',0):.4f} | Pol: {avg_loss.get('policy',0):.4f} | Imit: {avg_loss.get('forced_imitation',0):.4f} | Val: {avg_loss.get('value',0):.4f} | Ent: {avg_loss.get('entropy',0):.4f} | Pts: {avg_loss.get('pts',0):.4f} | Hidden: {avg_loss.get('hidden',0):.4f} | KL: {avg_loss.get('approx_kl',0):.4f} | Clip: {avg_loss.get('clipfrac',0):.3f}")
-        print(f"  - HiddenAux: PosBCE: {avg_loss.get('hidden_pos_loss',0):.4f} | ImpBCE: {avg_loss.get('hidden_impossible_loss',0):.4f} | Count: {avg_loss.get('hidden_count_loss',0):.4f} | PosAcc: {avg_loss.get('hidden_pos_acc',0):.3f} | ImpossibleMass: {avg_loss.get('impossible_mass',0):.3f}")
+        print(f"  - HiddenAux: PosBCE: {avg_loss.get('hidden_pos_loss',0):.4f} | KnownBCE: {avg_loss.get('hidden_known_loss',0):.4f} | ImpBCE: {avg_loss.get('hidden_impossible_loss',0):.4f} | Count: {avg_loss.get('hidden_count_loss',0):.4f} | Exclusive: {avg_loss.get('hidden_exclusive_loss',0):.4f}")
+        print(f"  - HiddenQ:   PosAcc: {avg_loss.get('hidden_pos_acc',0):.3f} | KnownAcc: {avg_loss.get('hidden_known_acc',0):.3f} | ExclusiveAcc: {avg_loss.get('hidden_exclusive_acc',0):.3f} | ImpossibleMass: {avg_loss.get('impossible_mass',0):.3f}")
         print(f"  - Time:     Sim: {gen_time:.1f}s | Opt: {train_time:.1f}s")
 
         log_entry = {"round": rnd+1, "stage": stage, "n_games": games_per_round,
@@ -849,12 +895,24 @@ if __name__ == "__main__":
                    help="Probability to branch on non-target decisions (used by stochastic modes)")
     p.add_argument("--max-adv-calls-per-episode", type=int, default=1,
                    help="Hard cap of advantage-query calls per episode")
+    p.add_argument("--max-pass-adv-calls-per-episode", type=int, default=4,
+                   help="Hard cap of advantage-query calls per episode for passing decisions")
+    p.add_argument("--max-info-adv-calls-per-episode", type=int, default=2,
+                   help="Hard cap of advantage-query calls per episode for trump/Q&A decisions")
+    p.add_argument("--force-passing-until-progress", type=float, default=0.55,
+                   help="Force heuristic passing for progress ratio < this value")
+    p.add_argument("--force-bidding-until-progress", type=float, default=0.90,
+                   help="Force heuristic bidding for progress ratio < this value")
     p.add_argument("--hidden-loss-weight", type=float, default=0.3,
                    help="Weight of hidden-hand auxiliary loss in total loss")
     p.add_argument("--impossible-penalty-weight", type=float, default=2.0,
                    help="Penalty multiplier for predicting cards that are impossible by symbolic constraints")
     p.add_argument("--hidden-count-weight", type=float, default=0.1,
                    help="Weight for hidden-card count consistency loss on possible cards")
+    p.add_argument("--hidden-known-weight", type=float, default=0.5,
+                   help="Weight for known-card (symbolically confirmed) positive supervision loss")
+    p.add_argument("--hidden-exclusive-weight", type=float, default=0.5,
+                   help="Weight for per-card unique-seat assignment (set-theoretic exclusivity) loss")
     p.add_argument("--forced-imitation-weight", type=float, default=0.5,
                    help="Base weight for imitation loss on heuristic-forced actions")
     p.add_argument("--forced-imitation-decay-rounds", type=int, default=128,
@@ -902,9 +960,15 @@ if __name__ == "__main__":
         adv_query_mode=args.adv_query_mode,
         adv_non_target_prob=args.adv_non_target_prob,
         max_adv_calls_per_episode=args.max_adv_calls_per_episode,
+        max_pass_adv_calls_per_episode=args.max_pass_adv_calls_per_episode,
+        max_info_adv_calls_per_episode=args.max_info_adv_calls_per_episode,
+        force_passing_until_progress=args.force_passing_until_progress,
+        force_bidding_until_progress=args.force_bidding_until_progress,
         hidden_loss_weight=args.hidden_loss_weight,
         impossible_penalty_weight=args.impossible_penalty_weight,
         hidden_count_weight=args.hidden_count_weight,
+        hidden_known_weight=args.hidden_known_weight,
+        hidden_exclusive_weight=args.hidden_exclusive_weight,
         forced_imitation_weight=args.forced_imitation_weight,
         forced_imitation_decay_rounds=args.forced_imitation_decay_rounds,
         named_checkpoint=args.named_checkpoint,

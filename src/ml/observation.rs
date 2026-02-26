@@ -341,6 +341,51 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
         }
     }
 
+    // Pass-memory confirmations (POV-safe):
+    // If I passed cards to my partner, those cards are known to be in partner hand
+    // until they are played or passed back to me.
+    {
+        let mut known_partner_cards = [false; 36];
+        for event in &game.all_events {
+            if let ActionType::Pass(cards) = &event.last_action.action_type {
+                let giver = event.last_action.player.clone();
+                let receiver = giver.partner();
+                if giver == pov {
+                    for card in cards {
+                        known_partner_cards[card_index(card)] = true;
+                    }
+                } else if receiver == pov {
+                    // If cards were passed back to me, they are no longer hidden in partner hand.
+                    for card in cards {
+                        known_partner_cards[card_index(card)] = false;
+                    }
+                }
+            }
+        }
+        // Only currently hidden cards can remain confirmed in hidden hands.
+        for (idx, known) in known_partner_cards.iter_mut().enumerate() {
+            if played_bitmask[idx] || my_hand_bitmask[idx] {
+                *known = false;
+            }
+        }
+        // Receiver of my pass is always my absolute partner, which maps to one hidden slot.
+        if let Some(partner_slot) = opp_places.iter().position(|p| *p == pov.partner()) {
+            for (idx, &known) in known_partner_cards.iter().enumerate() {
+                if !known {
+                    continue;
+                }
+                confirmed_bitmasks[partner_slot][idx] = true;
+                possible_bitmasks[partner_slot][idx] = true;
+                for seat in 0..3 {
+                    if seat != partner_slot {
+                        confirmed_bitmasks[seat][idx] = false;
+                        possible_bitmasks[seat][idx] = false;
+                    }
+                }
+            }
+        }
+    }
+
     // ── Current trick ─────────────────────────────────────────────────────────
     let mut current_trick_indices = vec![];
     let mut current_trick_players = vec![];
@@ -959,6 +1004,59 @@ mod tests {
                 guard_steps += 1;
             }
             assert!(guard_steps < 400, "game did not terminate within guard limit");
+        }
+    }
+
+    #[test]
+    fn test_passed_cards_confirm_receiver_for_pov() {
+        let _guard = test_lock().lock().expect("test mutex poisoned");
+        let names = ["S1", "S2", "S3", "S4"].map(|s| s.to_string());
+        let mut game = Game::new("pass_memory_test".to_string(), names, None);
+
+        // Start game.
+        let mut actions = game.legal_actions.clone();
+        for _ in 0..4 {
+            game = game.apply_action(actions.pop().expect("start action")).expect("start apply");
+            actions = game.legal_actions.clone();
+        }
+
+        // Reuse deterministic flow from game tests to reach PassingForth.
+        let bid140 = crate::game::gameevent::GameAction {
+            action_type: ActionType::NewBid(140),
+            player: game.state.player_at_turn.clone(),
+        };
+        game = game.apply_action(bid140).expect("bid 140 apply");
+        for _ in 0..4 {
+            actions = game.legal_actions.clone();
+            game = game.apply_action(actions[3].clone()).expect("bidding continue");
+        }
+        for _ in 0..3 {
+            actions = game.legal_actions.clone();
+            game = game.apply_action(actions[0].clone()).expect("bidding stop");
+        }
+        assert!(matches!(game.state.phase, crate::game::gamestate::GamePhase::PassingForth));
+
+        let passer = game.state.player_at_turn.clone();
+        let pass_action = game.legal_actions[0].clone();
+        let passed_cards = match &pass_action.action_type {
+            ActionType::Pass(cards) => cards.clone(),
+            _ => panic!("expected pass action in PassingForth"),
+        };
+        game = game.apply_action(pass_action).expect("apply pass");
+
+        // Build from passer POV and verify known passed cards are confirmed to partner slot.
+        let obs = build_observation(&game, passer.clone());
+        for card in &passed_cards {
+            let idx = card_index(card);
+            if obs.played_bitmask[idx] || obs.my_hand_bitmask[idx] {
+                continue;
+            }
+            assert!(
+                obs.confirmed_bitmasks[1][idx],
+                "passed card should be confirmed in partner hidden slot (idx={idx})"
+            );
+            assert!(!obs.possible_bitmasks[0][idx], "left slot should exclude idx={idx}");
+            assert!(!obs.possible_bitmasks[2][idx], "right slot should exclude idx={idx}");
         }
     }
 }

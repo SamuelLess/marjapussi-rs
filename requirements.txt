@@ -1,4 +1,2 @@
-numpy
-aiohttp
-# asyncio and other libs are part of the python standard library
-# torch is installed via ml/install_torch.py to select a CUDA-capable build when available
+# Legacy shim: project dependencies are declared in pyproject.toml.
+-e .

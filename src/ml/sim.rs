@@ -65,7 +65,7 @@ pub fn random_policy() -> PolicyFn {
 /// - Announce own trump immediately if legal.
 pub fn heuristic_policy() -> PolicyFn {
     Box::new(|game: &Game, _cache: &mut HashMap<u128, TtEntry>| {
-        use crate::game::gameevent::ActionType;
+        use crate::game::gameevent::{ActionType, QuestionType};
         use crate::game::cards::Value;
         let actions = &game.legal_actions;
         if actions.is_empty() { return 0; }
@@ -87,6 +87,51 @@ pub fn heuristic_policy() -> PolicyFn {
             if matches!(a.action_type, ActionType::AnnounceTrump(_)) {
                 return i;
             }
+        }
+
+        // If we can ask before leading, prefer informative questions that help
+        // resolve our own halves into trump before we throw those cards away.
+        let hand_now = game.state.player_at_turn().cards.clone();
+        let my_halves = crate::game::cards::halves(hand_now.clone());
+        let my_pairs = crate::game::cards::pairs(hand_now);
+        let suit_rank = |s: &crate::game::cards::Suit| -> i32 {
+            use crate::game::cards::Suit;
+            match s {
+                Suit::Red => 4,
+                Suit::Bells => 3,
+                Suit::Acorns => 2,
+                Suit::Green => 1,
+            }
+        };
+        let mut best_question: Option<(usize, i32)> = None;
+        for (i, a) in actions.iter().enumerate() {
+            let q_score = match &a.action_type {
+                ActionType::Question(QuestionType::YourHalf(suit)) => {
+                    let mut score = 0;
+                    if my_halves.contains(suit) { score += 40; }
+                    if my_pairs.contains(suit) { score -= 15; }
+                    if !game.state.trump_called.contains(suit) { score += 15; }
+                    else { score -= 20; }
+                    score += suit_rank(suit);
+                    Some(score)
+                }
+                ActionType::Question(QuestionType::Yours) => {
+                    let mut score = 5;
+                    if my_pairs.is_empty() { score += 10; }
+                    if my_halves.len() >= 2 { score += 10; }
+                    Some(score)
+                }
+                _ => None,
+            };
+            if let Some(score) = q_score {
+                match best_question {
+                    Some((_, best)) if score <= best => {}
+                    _ => best_question = Some((i, score)),
+                }
+            }
+        }
+        if let Some((idx, _)) = best_question {
+            return idx;
         }
 
         // Collect card-play actions

@@ -2,8 +2,8 @@
 # CLI flags override these values.
 
 # --- Core loop ---
-rounds = 100
-games_per_round = 200
+rounds = 256
+games_per_round = 128
 workers = 8
 mc_rollouts = 4
 train_batch = 192
@@ -26,10 +26,19 @@ opt_early_stop_patience = 1
 adv_query_mode = "target"
 adv_non_target_prob = 0.0
 max_adv_calls_per_episode = 1
+max_pass_adv_calls_per_episode = 4
+max_info_adv_calls_per_episode = 2
+
+# --- Curriculum forcing windows ---
+force_passing_until_progress = 0.55
+force_bidding_until_progress = 0.90
 
 # --- Auxiliary and imitation losses ---
 hidden_loss_weight = 0.3
 impossible_penalty_weight = 2.0
+hidden_count_weight = 0.1
+hidden_known_weight = 0.5
+hidden_exclusive_weight = 0.5
 forced_imitation_weight = 0.5
 forced_imitation_decay_rounds = 128
 

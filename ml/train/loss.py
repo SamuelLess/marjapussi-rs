@@ -3,6 +3,69 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.amp import autocast
 
+
+def _hidden_known_positive_loss(
+    card_logits: torch.Tensor,
+    hidden_known: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    BCE-on-positives for symbolically confirmed cards.
+    Returns (loss, known_acc).
+    """
+    known_mask = hidden_known > 0.5
+    known_count = known_mask.float().sum()
+    if known_count <= 0:
+        zero = torch.tensor(0.0, device=card_logits.device)
+        return zero, zero
+
+    bce_all = F.binary_cross_entropy_with_logits(
+        card_logits,
+        torch.ones_like(card_logits),
+        reduction="none",
+    )
+    loss = (bce_all * known_mask.float()).sum() / known_count
+    known_probs = torch.sigmoid(card_logits)
+    known_acc = (known_probs[known_mask] > 0.5).float().mean()
+    return loss, known_acc
+
+
+def _hidden_exclusive_assignment_loss(
+    card_logits: torch.Tensor,
+    hidden_target: torch.Tensor,
+    hidden_possible: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Per-card cross-entropy across hidden seats (3-way) for cards that are still hidden.
+    Enforces set-theoretic exclusivity: each hidden card should belong to exactly one seat.
+    Returns (loss, seat_acc).
+    """
+    # [B, 36, 3]
+    logits_per_card = card_logits.permute(0, 2, 1)
+    possible_per_card = hidden_possible.permute(0, 2, 1) > 0.5
+
+    # Mask impossible seats before CE.
+    masked_logits = logits_per_card.masked_fill(~possible_per_card, -1e4)
+
+    # True seat index per card from one-hot hidden_target.
+    true_seat = hidden_target.argmax(dim=1).long()  # [B, 36]
+    has_true = hidden_target.sum(dim=1) > 0.5       # [B, 36]
+
+    # Only train on cards whose true seat is hidden and feasible under possible-mask.
+    true_seat_possible = possible_per_card.gather(
+        dim=2, index=true_seat.unsqueeze(-1)
+    ).squeeze(-1)
+    card_mask = has_true & true_seat_possible
+
+    if not card_mask.any():
+        zero = torch.tensor(0.0, device=card_logits.device)
+        return zero, zero
+
+    ce_loss = F.cross_entropy(masked_logits[card_mask], true_seat[card_mask])
+    pred_seat = masked_logits.argmax(dim=-1)
+    seat_acc = (pred_seat[card_mask] == true_seat[card_mask]).float().mean()
+    return ce_loss, seat_acc
+
+
 def train_step(
     model,
     opt,
@@ -13,6 +76,8 @@ def train_step(
     hidden_loss_weight: float = 0.3,
     impossible_penalty_weight: float = 2.0,
     hidden_count_weight: float = 0.1,
+    hidden_known_weight: float = 0.5,
+    hidden_exclusive_weight: float = 0.5,
     forced_imitation_weight: float = 0.5,
 ) -> dict:
     model.train()
@@ -96,11 +161,16 @@ def train_step(
         # - No penalty on uncertain negatives (possible-but-not-true cards).
         hidden_target = batch.get("hidden_target")
         hidden_possible = batch.get("hidden_possible")
+        hidden_known = batch.get("hidden_known")
         hidden_loss = torch.tensor(0.0, device=logits.device)
         hidden_pos_loss = torch.tensor(0.0, device=logits.device)
+        hidden_known_loss = torch.tensor(0.0, device=logits.device)
         hidden_impossible_loss = torch.tensor(0.0, device=logits.device)
         hidden_count_loss = torch.tensor(0.0, device=logits.device)
+        hidden_exclusive_loss = torch.tensor(0.0, device=logits.device)
         hidden_pos_acc = torch.tensor(0.0, device=logits.device)
+        hidden_known_acc = torch.tensor(0.0, device=logits.device)
+        hidden_exclusive_acc = torch.tensor(0.0, device=logits.device)
         impossible_mass = torch.tensor(0.0, device=logits.device)
         if hidden_target is not None and hidden_possible is not None:
             hidden_target = hidden_target.float()
@@ -146,10 +216,24 @@ def train_step(
                 target_mass = (cards_rem[:, 1:4] * 9.0).float()
                 hidden_count_loss = F.smooth_l1_loss(possible_mass, target_mass)
 
+            if hidden_known is not None:
+                hidden_known_loss, hidden_known_acc = _hidden_known_positive_loss(
+                    card_logits=card_logits,
+                    hidden_known=hidden_known.float(),
+                )
+
+            hidden_exclusive_loss, hidden_exclusive_acc = _hidden_exclusive_assignment_loss(
+                card_logits=card_logits,
+                hidden_target=hidden_target,
+                hidden_possible=hidden_possible,
+            )
+
             hidden_loss = (
                 pos_loss
                 + impossible_penalty_weight * impossible_loss
                 + hidden_count_weight * hidden_count_loss
+                + hidden_known_weight * hidden_known_loss
+                + hidden_exclusive_weight * hidden_exclusive_loss
             )
         
         loss = (
@@ -185,10 +269,14 @@ def train_step(
             "pts": float('nan'),
             "hidden": float('nan'),
             "hidden_pos_loss": float('nan'),
+            "hidden_known_loss": float('nan'),
             "hidden_impossible_loss": float('nan'),
             "hidden_pos_acc": float('nan'),
+            "hidden_known_acc": float('nan'),
             "impossible_mass": float('nan'),
             "hidden_count_loss": float('nan'),
+            "hidden_exclusive_loss": float('nan'),
+            "hidden_exclusive_acc": float('nan'),
             "approx_kl": float('nan'),
             "clipfrac": float('nan'),
             "forced_imitation": float('nan'),
@@ -220,10 +308,14 @@ def train_step(
         "pts": pts_loss.item() if grads_valid else float('nan'),
         "hidden": hidden_loss.item() if grads_valid else float('nan'),
         "hidden_pos_loss": hidden_pos_loss.item() if grads_valid else float('nan'),
+        "hidden_known_loss": hidden_known_loss.item() if grads_valid else float('nan'),
         "hidden_impossible_loss": hidden_impossible_loss.item() if grads_valid else float('nan'),
         "hidden_pos_acc": hidden_pos_acc.item() if grads_valid else float('nan'),
+        "hidden_known_acc": hidden_known_acc.item() if grads_valid else float('nan'),
         "impossible_mass": impossible_mass.item() if grads_valid else float('nan'),
         "hidden_count_loss": hidden_count_loss.item() if grads_valid else float('nan'),
+        "hidden_exclusive_loss": hidden_exclusive_loss.item() if grads_valid else float('nan'),
+        "hidden_exclusive_acc": hidden_exclusive_acc.item() if grads_valid else float('nan'),
         "approx_kl": approx_kl.item() if grads_valid else float('nan'),
         "clipfrac": clipfrac.item() if grads_valid else float('nan'),
         "forced_imitation": forced_imitation_loss.item() if grads_valid else float('nan'),
