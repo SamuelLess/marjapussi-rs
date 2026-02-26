@@ -234,18 +234,6 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
     // off-suit when the lead suit was not trump, they have no more of lead suit.
     let mut opp_no_suit: [[bool; 4]; 3] = [[false; 4]; 3]; // opp × suit
 
-    for trick in &state.all_tricks {
-        if trick.cards.is_empty() {
-            continue;
-        }
-        let lead_suit = trick.cards[0].suit;
-        let lead_player = trick.winner.clone(); // winner = who leads NEXT, trick.cards[0] was played by winner of PREV trick
-        // Reconstruct who played which card: the lead player played cards[0], then clockwise
-        let _ = lead_suit;
-            let _ = lead_player;
-
-    }
-
     // Use all_events to track suit-following violations more accurately
     {
         let mut current_trick_lead_suit: Option<Suit> = None;
@@ -255,16 +243,16 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
         for event in &game.all_events {
             // Reconstruct the history of the trump suit as it was known AT THE TIME
             if let ActionType::AnnounceTrump(suit) = &event.last_action.action_type {
-                historical_trump = Some(suit.clone());
+                historical_trump = Some(*suit);
             } else if let Some(GameCallback::NewTrump(suit)) = &event.callback {
-                historical_trump = Some(suit.clone());
+                historical_trump = Some(*suit);
             }
 
             if let ActionType::CardPlayed(card) = &event.last_action.action_type {
                 let player = &event.last_action.player;
                 if cards_in_trick.is_empty() {
                     // This player is leading the trick
-                    current_trick_lead_suit = Some(card.suit.clone());
+                    current_trick_lead_suit = Some(card.suit);
                 } else if let Some(lead_suit) = &current_trick_lead_suit {
                     // This player is following. Did they play off-suit?
                     if card.suit != *lead_suit {
@@ -281,7 +269,7 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
                         if !trump_is_lead || !played_trump {
                             for (i, opp_place) in opp_places.iter().enumerate() {
                                 if opp_place.0 == player.0 {
-                                    opp_no_suit[i][suit_index(lead_suit.clone())] = true;
+                                    opp_no_suit[i][suit_index(*lead_suit)] = true;
                                 }
                             }
                         }
@@ -357,7 +345,7 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
         let card_events: Vec<_> = game.all_events.iter()
             .filter(|e| matches!(e.last_action.action_type, ActionType::CardPlayed(_)))
             .collect();
-        for (i, ev) in card_events.iter().enumerate().skip(cards_in_finished) {
+        for ev in card_events.iter().skip(cards_in_finished) {
             if let ActionType::CardPlayed(card) = &ev.last_action.action_type {
                 let relative_seat = {
                     let abs_seat = ev.last_action.player.0;
@@ -366,7 +354,6 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
                 };
                 current_trick_indices.push(card_index(card));
                 current_trick_players.push(relative_seat);
-                let _ = i;
             }
         }
     }
@@ -540,9 +527,7 @@ fn build_event_tokens(game: &Game, pov: &PlaceAtTable, my_role: usize) -> Vec<u3
                         toks.push(CARD_BASE + card_index(card) as u32);
                     }
                 } else {
-                    for _ in cards {
-                        toks.push(UNKNOWN_CARD);
-                    }
+                    toks.extend(std::iter::repeat_n(UNKNOWN_CARD, cards.len()));
                 }
             }
             ActionType::CardPlayed(card) => {
@@ -603,14 +588,9 @@ fn build_event_tokens(game: &Game, pov: &PlaceAtTable, my_role: usize) -> Vec<u3
         }
 
         // Emit callback token if present
-        if let Some(cb) = &event.callback {
-            match cb {
-                GameCallback::NewTrump(suit) | GameCallback::StillTrump(suit) => {
-                    toks.push(ACT_TRUMP);
-                    toks.push(SUIT_BASE + suit_index(*suit) as u32);
-                }
-                _ => {}
-            }
+        if let Some(GameCallback::NewTrump(suit) | GameCallback::StillTrump(suit)) = &event.callback {
+            toks.push(ACT_TRUMP);
+            toks.push(SUIT_BASE + suit_index(*suit) as u32);
         }
     }
 

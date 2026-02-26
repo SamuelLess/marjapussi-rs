@@ -554,7 +554,6 @@ def train_online(
         completed_games = 0
         progress_lock = threading.Lock()
 
-        progress = rnd / max(1, rounds)
         force_bidding = progress < 0.90
         force_passing = progress < 0.30
         
