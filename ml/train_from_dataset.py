@@ -190,6 +190,9 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
           bid_weight: float = 1.0, pass_weight: float = 1.0,
           outcome_weight_alpha: float = 0.0,
           phase_balance_strength: float = 1.0,
+          min_epochs: int = 1,
+          target_bc_loss: float = 0.0,
+          target_bc_streak: int = 2,
           model_family: str = "legacy", model_config: str | None = None,
           strict_param_budget: int | None = None,
           lr_schedule: str = "plateau", lr_min: float = 1e-5,
@@ -219,6 +222,15 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
     Log.info(
         f"Phase balance: strength={phase_balance_strength:.2f} (0 disables per-batch phase balancing)"
     )
+    min_epochs = max(1, int(min_epochs))
+    target_bc_loss = float(target_bc_loss)
+    target_bc_streak = max(1, int(target_bc_streak))
+    target_bc_enabled = target_bc_loss > 0.0
+    if target_bc_enabled:
+        Log.info(
+            f"Adaptive stop: target_bc_loss<={target_bc_loss:.4f}, "
+            f"min_epochs={min_epochs}, streak={target_bc_streak}, max_epochs={epochs}"
+        )
     Log.info(f"Model params: {model.param_count():,}")
     if ckpt and Path(ckpt).exists():
         state_dict, ckpt_meta, _ = parse_checkpoint(ckpt, map_location=device)
@@ -276,6 +288,7 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
     progress_interval = max(1, min(log_every, max(1, steps_per_epoch // 8)))
 
     global_step = 0
+    bc_target_hits = 0
     for epoch in range(epochs):
         Log.phase(f"Epoch {epoch+1}/{epochs}: Pretraining")
         ds = NdJsonDataset(data_path, shuffle_buf=min(100_000, batch * 200), epochs=1)
@@ -437,6 +450,27 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
         print(f"  - Saved:    {ckpt_path}")
         if stop_early:
             break
+        if target_bc_enabled:
+            reached_min_epochs = (epoch + 1) >= min_epochs
+            is_good_epoch = avg_bc <= target_bc_loss
+            if reached_min_epochs and is_good_epoch:
+                bc_target_hits += 1
+                Log.info(
+                    f"BC target hit {bc_target_hits}/{target_bc_streak}: "
+                    f"{avg_bc:.4f} <= {target_bc_loss:.4f}"
+                )
+                if bc_target_hits >= target_bc_streak:
+                    Log.success(
+                        f"Stopping on BC target after epoch {epoch+1}: "
+                        f"{avg_bc:.4f} <= {target_bc_loss:.4f}"
+                    )
+                    break
+            else:
+                if reached_min_epochs and bc_target_hits > 0:
+                    Log.info(
+                        f"BC target streak reset ({avg_bc:.4f} > {target_bc_loss:.4f})."
+                    )
+                bc_target_hits = 0
 
     Log.success("Pretraining complete.")
     Log.info(f"Checkpoint: {ckpt_dir / 'latest.pt'}")
@@ -469,6 +503,12 @@ if __name__ == "__main__":
                    help="Optional outcome-based weighting in BC (0.0 = pure imitation)")
     p.add_argument("--phase-balance-strength", type=float, default=1.0,
                    help="Batch-local phase balancing exponent (0.0 disables balancing)")
+    p.add_argument("--min-epochs", type=int, default=1,
+                   help="Minimum pretraining epochs before target-based early stop can trigger")
+    p.add_argument("--target-bc-loss", type=float, default=0.0,
+                   help="Stop pretraining after min-epochs once BC loss reaches this threshold (0 disables)")
+    p.add_argument("--target-bc-streak", type=int, default=2,
+                   help="Consecutive epochs that must satisfy target-bc-loss before stopping")
     p.add_argument("--lr-schedule", choices=["plateau", "cosine", "constant"], default="plateau",
                    help="Learning-rate control strategy")
     p.add_argument("--lr-min", type=float, default=1e-5,
@@ -504,6 +544,9 @@ if __name__ == "__main__":
           bid_weight=args.bid_weight, pass_weight=args.pass_weight,
           outcome_weight_alpha=args.outcome_weight_alpha,
           phase_balance_strength=args.phase_balance_strength,
+          min_epochs=args.min_epochs,
+          target_bc_loss=args.target_bc_loss,
+          target_bc_streak=args.target_bc_streak,
           lr_schedule=args.lr_schedule, lr_min=args.lr_min,
           lr_warmup_steps=args.lr_warmup_steps,
           lr_plateau_patience=args.lr_plateau_patience,

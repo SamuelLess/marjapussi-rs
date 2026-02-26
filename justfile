@@ -88,12 +88,7 @@ ensure-ml-convert-release:
 # Convert legacy human games into decision-point NDJSON.
 build-human-dataset input="ml/dataset/games.ndjson" output="ml/data/human_dataset.ndjson": ensure-ml-server-release ensure-ml-convert-release
     {{ml_convert_bin}} --input {{input}} --output {{output}}
-    @{{python}} -c "import json,collections,sys; p='{{output}}'; c=collections.Counter(); n=0; \
-f=open(p,'r',encoding='utf-8'); \
-[c.update([ (lambda r: (r['obs'].get('legal_actions',[{}])[min(max(0,int(r.get('action_taken',0))), max(0,len(r['obs'].get('legal_actions',[]))-1))].get('action_token') if r.get('obs',{}).get('legal_actions') else None))(json.loads(line)) ]) or (n:=n+1) for line in f if line.strip()]; \
-f.close(); \
-print(f'Dataset rows={n} pass_pick(token52)={c.get(52,0)} direct_pass(token43)={c.get(43,0)}'); \
-sys.exit(0 if c.get(52,0)>0 and c.get(43,0)==0 else 2)"
+    @{{python}} -c "import json,collections,sys; p='{{output}}'; c=collections.Counter(); n=0; f=open(p,'r',encoding='utf-8'); [c.update([(lambda r: (r['obs'].get('legal_actions',[{}])[min(max(0,int(r.get('action_taken',0))), max(0,len(r['obs'].get('legal_actions',[]))-1))].get('action_token') if r.get('obs',{}).get('legal_actions') else None))(json.loads(line))]) or (n:=n+1) for line in f if line.strip()]; f.close(); print(f'Dataset rows={n} pass_pick(token52)={c.get(52,0)} direct_pass(token43)={c.get(43,0)}'); sys.exit(0 if c.get(52,0)>0 and c.get(43,0)==0 else 2)"
 
 # Supervised pretraining on converted human data.
 pretrain-human data="ml/data/human_dataset.ndjson" epochs="8" max_steps="2048" checkpoints_dir="ml/checkpoints":
@@ -158,7 +153,7 @@ train-65k-scratch: train-65k
 # Human-first training profile:
 # 1) convert legacy logs, 2) supervised warm-start (~50% upfront step budget), 3) RL fine-tune.
 train-65k-human run_name="human_first_65k": setup-ml build-human-dataset
-    @echo "Running stronger human pretraining warm-start (max_steps=2048) before RL fine-tune..."
+    @echo "Running adaptive human pretraining warm-start (target BC loss) before RL fine-tune..."
     @run_label="{{run_name}}"; \
       case "$run_label" in run_name=*) run_label="${run_label#run_name=}" ;; esac; \
       run_root="ml/runs/$run_label"; \
@@ -168,7 +163,7 @@ train-65k-human run_name="human_first_65k": setup-ml build-human-dataset
       run_bin="$run_bin_dir/$(basename "{{ml_server_bin}}")"; \
       mkdir -p "$run_ckpt" "$run_logs" "$run_bin_dir"; \
       cp -f "{{ml_server_bin}}" "$run_bin"; \
-      {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 8 --batch 1024 --workers 4 --device cuda --max-steps 2048 --bid-weight 2.0 --pass-weight 2.5 --checkpoints-dir "$run_ckpt"; \
+      {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 32 --batch 512 --workers 4 --device cuda --max-steps 0 --min-epochs 8 --target-bc-loss 0.240 --target-bc-streak 2 --bid-weight 2.0 --pass-weight 2.5 --lr-schedule plateau --lr 3e-4 --lr-min 8e-5 --lr-warmup-steps 256 --lr-plateau-patience 2 --lr-plateau-factor 0.75 --lr-plateau-threshold 6e-4 --lr-plateau-cooldown 1 --checkpoints-dir "$run_ckpt"; \
       cp -f "$run_ckpt/latest.pt" "$run_ckpt/$run_label"_pretrain_final.pt; \
       echo "Saved pretraining final checkpoint: $run_ckpt/$run_label"_pretrain_final.pt; \
       ML_SERVER_BIN="$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 512 --games-per-round 128 --workers 32 --mc-rollouts 4 --device cuda --eval-every 16 --checkpoint "$run_ckpt/$run_label"_pretrain_final.pt --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3 --named-checkpoint "$run_label"_selfplay_final.pt --checkpoints-dir "$run_ckpt" --runs-dir "$run_logs"; \
@@ -251,7 +246,7 @@ train-65k-human-v2 run_name="v2_human_first_65k": setup-ml build-human-dataset
       run_bin="$run_bin_dir/$(basename "{{ml_server_bin}}")"; \
       mkdir -p "$run_ckpt" "$run_logs" "$run_bin_dir"; \
       cp -f "{{ml_server_bin}}" "$run_bin"; \
-      {{cuda_alloc_env}} {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 12 --batch 256 --workers 2 --device cuda --max-steps 6144 --bid-weight 2.5 --pass-weight 3.0 --lr-schedule plateau --lr 3e-4 --lr-min 6e-5 --lr-warmup-steps 384 --lr-plateau-patience 2 --lr-plateau-factor 0.7 --lr-plateau-threshold 8e-4 --lr-plateau-cooldown 1 {{v2_model_args}} --checkpoints-dir "$run_ckpt"; \
+      {{cuda_alloc_env}} {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 48 --batch 256 --workers 2 --device cuda --max-steps 0 --min-epochs 12 --target-bc-loss 0.235 --target-bc-streak 2 --bid-weight 2.5 --pass-weight 3.0 --lr-schedule plateau --lr 3e-4 --lr-min 6e-5 --lr-warmup-steps 384 --lr-plateau-patience 2 --lr-plateau-factor 0.7 --lr-plateau-threshold 8e-4 --lr-plateau-cooldown 1 {{v2_model_args}} --checkpoints-dir "$run_ckpt"; \
       cp -f "$run_ckpt/latest.pt" "$run_ckpt/$run_label"_pretrain_final.pt; \
       ML_SERVER_BIN="$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 512 --games-per-round 128 --workers 32 --mc-rollouts 4 --device cuda --eval-every 16 --checkpoint "$run_ckpt/$run_label"_pretrain_final.pt --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3 {{v2_model_args}} --named-checkpoint "$run_label"_selfplay_final.pt --checkpoints-dir "$run_ckpt" --runs-dir "$run_logs"; \
       cp -f "$run_ckpt/best.pt" "$run_ckpt/$run_label"_selfplay_best.pt; \
@@ -270,7 +265,7 @@ train-128k run_name="set_theory_128k": setup-ml build-human-dataset
       run_bin="$run_bin_dir/$(basename "{{ml_server_bin}}")"; \
       mkdir -p "$run_ckpt" "$run_logs" "$run_bin_dir"; \
       cp -f "{{ml_server_bin}}" "$run_bin"; \
-      {{cuda_alloc_env}} {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 24 --batch 256 --workers 2 --device cuda --max-steps 12000 --bid-weight 2.5 --pass-weight 3.0 --lr-schedule plateau --lr 3e-4 --lr-min 6e-5 --lr-warmup-steps 384 --lr-plateau-patience 2 --lr-plateau-factor 0.7 --lr-plateau-threshold 8e-4 --lr-plateau-cooldown 1 --checkpoints-dir "$run_ckpt"; \
+      {{cuda_alloc_env}} {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 64 --batch 256 --workers 2 --device cuda --max-steps 0 --min-epochs 16 --target-bc-loss 0.230 --target-bc-streak 2 --bid-weight 2.5 --pass-weight 3.0 --lr-schedule plateau --lr 3e-4 --lr-min 6e-5 --lr-warmup-steps 384 --lr-plateau-patience 2 --lr-plateau-factor 0.7 --lr-plateau-threshold 8e-4 --lr-plateau-cooldown 1 --checkpoints-dir "$run_ckpt"; \
       cp -f "$run_ckpt/latest.pt" "$run_ckpt/$run_label"_pretrain_final.pt; \
       echo "Saved pretraining final checkpoint: $run_ckpt/$run_label"_pretrain_final.pt; \
       ML_SERVER_BIN="$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 512 --games-per-round 256 --workers 24 --mc-rollouts 4 --device cuda --eval-every 16 --checkpoint "$run_ckpt/$run_label"_pretrain_final.pt --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3 --hidden-loss-weight 0.10 --impossible-penalty-weight 2.00 --named-checkpoint "$run_label"_selfplay_final.pt --checkpoints-dir "$run_ckpt" --runs-dir "$run_logs"; \
