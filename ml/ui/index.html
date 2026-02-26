@@ -5,39 +5,35 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Marjapussi KI</title>
-  <link rel="stylesheet" href="/ui/style.css?v=3">
+  <link rel="stylesheet" href="/ui/style.css?v=4">
 </head>
 
 <body>
-
-  <!-- ── Header ──────────────────────────────────────────────────────────────── -->
   <div id="header">
-    <div id="logo">🃏 Marjapussi KI</div>
-    <div style="display:flex;align-items:center;gap:8px">
+    <div id="logo">Marjapussi KI</div>
+    <div id="ctrls">
       <div class="dot" id="dot"></div>
       <button class="btn bs" id="bn">Neues Spiel</button>
-      <button class="btn bs" id="bp">▶ Weiter</button>
-      <button class="btn bs ba" id="ba">▶ Auto</button>
+      <button class="btn bs" id="bp">Step</button>
+      <button class="btn bs ba" id="ba">Auto</button>
+      <button class="btn bs" id="bq">Pause</button>
+      <input id="seed" class="seed-input" type="text" placeholder="Seed">
+      <button class="btn bs" id="br">Reset Seed</button>
       <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--dim);cursor:pointer">
         <input type="checkbox" id="dbg"> Debug
       </label>
     </div>
   </div>
 
-  <!-- ── Main layout ──────────────────────────────────────────────────────────── -->
   <div id="main">
-
-    <!-- ── Board panel ─────────────────────────────────────────────────────── -->
     <div id="board">
-
-      <!-- Score bar -->
       <div id="score-bar">
         <div class="score-team">
           <span class="team-lbl">Wir</span>
           <span class="score-val" id="spts">0</span>
         </div>
         <div id="trump-disp">
-          <div id="trump-sym">—</div>
+          <div id="trump-sym">-</div>
           <div id="trump-lbl">Kein Trumpf</div>
         </div>
         <div class="score-team">
@@ -46,80 +42,66 @@
         </div>
       </div>
 
-      <!-- Table grid: top / left / felt / right / last-trick / bottom -->
       <div id="tbl">
-
-        <!-- P2 — top (partner) -->
         <div class="pa" id="p2">
           <div class="plbl"><span class="badge" id="b2">P2</span> Partner</div>
           <div class="hand" id="h2"></div>
         </div>
 
-        <!-- P1 — left -->
         <div class="pa" id="p1" style="justify-content:center">
           <div class="plbl"><span class="badge" id="b1">P1</span></div>
           <div class="hand handv" id="h1"></div>
         </div>
 
-        <!-- Center felt -->
         <div id="felt">
           <div id="trick"></div>
-          <div id="trick-info">—</div>
+          <div id="trick-info">-</div>
           <div id="no-game" style="display:none">Kein aktives Spiel</div>
         </div>
 
-        <!-- P3 — right -->
         <div class="pa" id="p3" style="justify-content:center">
           <div class="plbl"><span class="badge" id="b3">P3</span></div>
           <div class="hand handv" id="h3"></div>
         </div>
 
-        <!-- Last trick strip -->
         <div id="last-trick-row" style="display:none">
           <span class="lt-label" id="lt-label">Letzter Stich</span>
           <div id="lt-cards" style="display:flex;gap:4px;align-items:center"></div>
         </div>
 
-        <!-- P0 — bottom (us) -->
         <div class="pa" id="p0">
           <div class="plbl"><span class="badge you">Du</span></div>
           <div class="hand" id="h0"></div>
           <div id="bid-area"></div>
         </div>
+      </div>
+    </div>
 
-      </div><!-- /#tbl -->
-    </div><!-- /#board -->
-
-    <!-- ── Sidebar: AI info + event log ────────────────────────────────────── -->
     <div id="side">
-      <!-- AI seats -->
       <div class="ss" style="flex-shrink:0">
-        <div class="st">KI-Analyse</div>
+        <div class="st">Seat Controller + KI Debug</div>
         <div id="ai"></div>
       </div>
-      <!-- Spielverlauf (event log) -->
       <div id="evlog-wrap">
         <div class="st">Spielverlauf</div>
         <div id="evlog"></div>
       </div>
     </div>
 
-    <!-- ── Third column: debug ──────────────────────────────────────────────── -->
     <div id="col3">
       <div id="dbg-panel" style="display:none">
-        <div class="dbg-hdr">🔍 Debug — Alle Karten</div>
+        <div class="dbg-hdr">Debug Ansicht</div>
         <div class="dbg-legend">
           <span><span class="dot-c"></span> Sicher</span>
-          <span><span class="dot-p"></span> Möglich</span>
+          <span><span class="dot-p"></span> Moeglich</span>
           <span><span class="dot-n"></span> Ausgeschlossen</span>
         </div>
         <div id="dbg-content"></div>
       </div>
     </div>
+  </div>
 
-  </div><!-- /#main -->
-
-  <script src="/ui/app.js?v=3"></script>
+  <script src="/ui/app.js?v=4"></script>
 </body>
 
 </html>

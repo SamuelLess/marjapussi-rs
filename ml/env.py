@@ -5,8 +5,11 @@ Spawns the Rust ml_server binary as a subprocess and communicates via JSON lines
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import time
+import uuid
 from pathlib import Path
 from typing import Optional
 import torch
@@ -89,7 +92,34 @@ class MarjapussiEnv:
         self._done = False
         self.include_labels = include_labels
         self.binary_path = resolve_ml_server_binary(binary_path)
+        self._spawn_binary_path: Optional[Path] = None
         self._start_proc()
+
+    def _prepare_spawn_binary(self) -> Path:
+        """
+        On Windows, execute a per-process copy of ml_server.exe so Cargo can rebuild
+        target/release/ml_server.exe while env processes are still running.
+        """
+        src = self.binary_path
+        if os.name != "nt":
+            return src
+
+        runtime_dir = Path(__file__).parent / ".runtime_bins"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+
+        # Opportunistic cleanup of stale runtime binaries.
+        now = time.time()
+        for p in runtime_dir.glob("ml_server_run_*.exe"):
+            try:
+                if now - p.stat().st_mtime > 24 * 3600:
+                    p.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        dst = runtime_dir / f"ml_server_run_{os.getpid()}_{uuid.uuid4().hex}.exe"
+        shutil.copy2(src, dst)
+        self._spawn_binary_path = dst
+        return dst
 
     def _start_proc(self):
         if not self.binary_path.exists():
@@ -97,8 +127,9 @@ class MarjapussiEnv:
                 f"ml_server binary not found at {self.binary_path}. "
                 "Run: cargo build --release --bin ml_server"
             )
+        spawn_binary = self._prepare_spawn_binary()
         self.proc = subprocess.Popen(
-            [str(self.binary_path)],
+            [str(spawn_binary)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -155,10 +186,18 @@ class MarjapussiEnv:
         info = resp.get("outcome") or {}
         return self._obs, self._done, info
 
-    def observe(self) -> dict:
-        resp = _send(self.proc, {"cmd": "observe"})
+    def observe(self, pov: Optional[int] = None) -> dict:
+        if pov is None:
+            cmd = {"cmd": "observe"}
+        else:
+            cmd = {"cmd": "observe_pov", "pov": int(pov)}
+        resp = _send(self.proc, cmd)
         self._labels = resp.get("labels")
         return resp["obs"]
+
+    def observe_pov(self, pov: int) -> dict:
+        """Observe current state from an arbitrary seat POV without changing env.pov."""
+        return self.observe(pov=pov)
 
     def observe_debug(self) -> dict:
         resp = _send(self.proc, {"cmd": "observe_debug"})
@@ -203,6 +242,12 @@ class MarjapussiEnv:
             if self.proc.poll() is None:
                 self.proc.terminate()
                 self.proc.wait()
+        if self._spawn_binary_path is not None:
+            try:
+                self._spawn_binary_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            self._spawn_binary_path = None
 
 
 # ── Observation → Tensor conversion ───────────────────────────────────────────

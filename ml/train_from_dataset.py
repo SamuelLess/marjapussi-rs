@@ -24,8 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from model import ACTION_FEAT_DIM, MarjapussiNet
 from env import obs_to_tensors
 
-CKPT_DIR = Path(__file__).parent / "checkpoints"
-CKPT_DIR.mkdir(exist_ok=True)
+DEFAULT_CKPT_DIR = Path(__file__).parent / "checkpoints"
 
 
 def configure_torch_runtime(device: str, workers: int) -> None:
@@ -146,8 +145,11 @@ def collate(records: list[dict]):
 
 def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
           device: str = "cpu", ckpt: str | None = None, workers: int = 4,
-          log_every: int = 500, amp: bool = True, max_steps: int = 0):
+          log_every: int = 500, amp: bool = True, max_steps: int = 0,
+          checkpoints_dir: str | Path = DEFAULT_CKPT_DIR):
     configure_torch_runtime(device=device, workers=workers)
+    ckpt_dir = Path(checkpoints_dir)
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     model = MarjapussiNet().to(device)
     print(f"Model: {model.param_count():,} params  Device: {device}")
@@ -237,15 +239,15 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
                 stop_early = True
                 break
 
-        ckpt_path = CKPT_DIR / f"epoch_{epoch+1}.pt"
+        ckpt_path = ckpt_dir / f"epoch_{epoch+1}.pt"
         torch.save(model.state_dict(), ckpt_path)
-        torch.save(model.state_dict(), CKPT_DIR / "latest.pt")
+        torch.save(model.state_dict(), ckpt_dir / "latest.pt")
         print(f"  -> Saved {ckpt_path}")
         if stop_early:
             break
 
-    print("\nTraining done. Checkpoint: ml/checkpoints/latest.pt")
-    print("Next: python ml/train.py --checkpoint ml/checkpoints/latest.pt  (self-play fine-tune)")
+    print(f"\nTraining done. Checkpoint: {ckpt_dir / 'latest.pt'}")
+    print(f"Next: python ml/train.py --checkpoint {ckpt_dir / 'latest.pt'}  (self-play fine-tune)")
 
 
 if __name__ == "__main__":
@@ -261,6 +263,8 @@ if __name__ == "__main__":
     p.add_argument("--max-steps", type=int, default=0,
                    help="Optional hard cap on optimizer steps (0 = disabled)")
     p.add_argument("--no-amp",   action="store_true",         help="Disable mixed precision")
+    p.add_argument("--checkpoints-dir", default=str(DEFAULT_CKPT_DIR),
+                   help="Directory for pretraining checkpoints")
     args = p.parse_args()
 
     print(f"CUDA available: {torch.cuda.is_available()}")
@@ -270,4 +274,5 @@ if __name__ == "__main__":
     train(data_path=args.data, epochs=args.epochs, batch=args.batch,
           lr=args.lr, device=args.device, ckpt=args.checkpoint,
           workers=args.workers, log_every=args.log_every,
-          amp=not args.no_amp, max_steps=args.max_steps)
+          amp=not args.no_amp, max_steps=args.max_steps,
+          checkpoints_dir=args.checkpoints_dir)

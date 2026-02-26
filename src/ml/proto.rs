@@ -44,6 +44,12 @@ pub enum Request {
     },
     /// Return current observation without advancing.
     Observe,
+    /// Return current observation for an arbitrary POV seat without advancing.
+    ObservePov {
+        /// POV seat index (0..3). Defaults to 0.
+        #[serde(default)]
+        pov: u8,
+    },
     /// Return debug-only payload (omniscient state for tooling/UI).
     ObserveDebug,
     /// Request the heuristic policy's preferred action.
@@ -160,6 +166,7 @@ pub struct Server {
     include_labels: bool,
     cache: HashMap<u128, TtEntry>,
     pass_selection: PassSelectionState,
+    pass_selection_owner: Option<PlaceAtTable>,
 }
 
 impl Server {
@@ -170,18 +177,38 @@ impl Server {
             include_labels: false,
             cache: HashMap::with_capacity(8192),
             pass_selection: PassSelectionState::default(),
+            pass_selection_owner: None,
         }
     }
 
-    fn pass_options_for_current_turn(&mut self, game: &Game) -> Option<Vec<crate::ml::pass_selection::PassActionOption>> {
-        if !is_pov_pass_turn(game, self.pov.clone()) {
-            self.pass_selection.clear();
+    fn clear_pass_selection(&mut self) {
+        self.pass_selection.clear();
+        self.pass_selection_owner = None;
+    }
+
+    fn pass_options_for_turn(
+        &mut self,
+        game: &Game,
+        pov: PlaceAtTable,
+    ) -> Option<Vec<crate::ml::pass_selection::PassActionOption>> {
+        if !is_pov_pass_turn(game, pov) {
             return None;
+        }
+
+        let owner = game.state.player_at_turn.clone();
+        let owner_changed = self
+            .pass_selection_owner
+            .as_ref()
+            .map(|o| o.0 != owner.0)
+            .unwrap_or(true);
+        if owner_changed {
+            self.pass_selection.clear();
+            self.pass_selection_owner = Some(owner);
         }
 
         let options = collect_pass_options(game);
         if options.is_empty() {
-            self.pass_selection.clear();
+            self.clear_pass_selection();
             return None;
         }
 
@@ -199,20 +226,28 @@ impl Server {
         Some(options)
     }
 
-    fn build_obs_payload(&mut self, game: &Game) -> (ObservationJson, Option<ObservationTrainLabelsJson>) {
-        let pass_options = self.pass_options_for_current_turn(game);
-        let mut obs_full = build_observation(game, self.pov.clone());
+    fn build_obs_payload_for_pov(
+        &mut self,
+        game: &Game,
+        pov: PlaceAtTable,
+    ) -> (ObservationJson, Option<ObservationTrainLabelsJson>) {
+        let pass_options = self.pass_options_for_turn(game, pov.clone());
+        let mut obs_full = build_observation(game, pov.clone());
         if let Some(options) = pass_options {
             obs_full.legal_actions = build_pick_legal_actions(&options, self.pass_selection.selected());
             obs_full.pass_selection_indices = self.pass_selection.selected().to_vec();
             obs_full.pass_selection_target = PASS_PICK_TARGET;
         }
-        let labels = if self.include_labels {
+        let labels = if self.include_labels && pov.0 == self.pov.0 {
             Some(ObservationTrainLabelsJson::from(&obs_full))
         } else {
             None
         };
         (ObservationJson::from(&obs_full), labels)
+    }
+
+    fn build_obs_payload(&mut self, game: &Game) -> (ObservationJson, Option<ObservationTrainLabelsJson>) {
+        self.build_obs_payload_for_pov(game, self.pov.clone())
     }
 
     fn branch_score_for_infos(&self, infos: &[GameFinishedInfo], acting_party: PlaceAtTable) -> f32 {
@@ -323,7 +358,7 @@ impl Server {
                     }
                 }
 
-                self.pass_selection.clear();
+                self.clear_pass_selection();
                 let done = game.ended();
                 let (obs, labels) = self.build_obs_payload(&game);
                 self.game = Some(game);
@@ -336,7 +371,8 @@ impl Server {
                     None => return Response::Error { message: "No game in progress".into() },
                 };
 
-                if let Some(pass_options) = self.pass_options_for_current_turn(&game) {
+                let actor = game.state.player_at_turn.clone();
+                if let Some(pass_options) = self.pass_options_for_turn(&game, actor) {
                     if let Some(card_idx) = decode_pick_action_idx(action_idx) {
                         if let Err(msg) = self.pass_selection.select_card(&pass_options, card_idx) {
                             return Response::Error { message: msg };
@@ -358,7 +394,7 @@ impl Server {
                         ) {
                             Some(idx) => idx,
                             None => {
-                                self.pass_selection.clear();
+                                self.clear_pass_selection();
                                 return Response::Error {
                                     message: "Could not resolve selected pass cards to a legal pass action".into(),
                                 };
@@ -370,7 +406,7 @@ impl Server {
                             Ok(g) => g,
                             Err(e) => return Response::Error { message: format!("{:?}", e) },
                         };
-                        self.pass_selection.clear();
+                        self.clear_pass_selection();
 
                         let done = next.ended();
                         let (obs, labels) = self.build_obs_payload(&next);
@@ -401,6 +437,7 @@ impl Server {
                     Ok(g) => g,
                     Err(e) => return Response::Error { message: format!("{:?}", e) },
                 };
+                self.clear_pass_selection();
                 let done = next.ended();
                 let (obs, labels) = self.build_obs_payload(&next);
                 let outcome = if done {
@@ -446,7 +483,7 @@ impl Server {
                         Ok(g) => g,
                         Err(e) => return Response::Error { message: format!("{:?}", e) },
                     };
-                    self.pass_selection.clear();
+                    self.clear_pass_selection();
                     let done = next.ended();
                     let (obs, labels) = self.build_obs_payload(&next);
                     let outcome = if done {
@@ -471,6 +508,21 @@ impl Server {
                 Response::Obs { obs, done, labels, outcome: None }
             }
 
+            Request::ObservePov { pov } => {
+                let game = match &self.game {
+                    Some(g) => g.clone(),
+                    None => return Response::Error { message: "No game in progress".into() },
+                };
+                let done = game.ended();
+                let (obs, _labels) = self.build_obs_payload_for_pov(&game, PlaceAtTable(pov));
+                Response::Obs {
+                    obs,
+                    done,
+                    labels: None,
+                    outcome: None,
+                }
+            }
+
             Request::ObserveDebug => {
                 let game = match &self.game {
                     Some(g) => g,
@@ -487,7 +539,8 @@ impl Server {
                     None => return Response::Error { message: "No game in progress".into() },
                 };
 
-                if let Some(pass_options) = self.pass_options_for_current_turn(&game) {
+                let actor = game.state.player_at_turn.clone();
+                if let Some(pass_options) = self.pass_options_for_turn(&game, actor) {
                     let legal_pick_actions = build_pick_legal_actions(&pass_options, self.pass_selection.selected());
                     if legal_pick_actions.is_empty() {
                         return Response::HeuristicAction { action_idx: 0 };
@@ -535,7 +588,7 @@ impl Server {
                 };
                 let (_final_game, info) = run_to_end(game, &pol, &mut self.cache);
                 self.game = None;
-                self.pass_selection.clear();
+                self.clear_pass_selection();
                 Response::Done { outcome: info_to_outcome(&info) }
             }
 
@@ -549,7 +602,8 @@ impl Server {
                     PolicyName::Heuristic => heuristic_policy(),
                 };
                 let branches_raw = try_all_actions(&game, &pol, &mut self.cache, num_rollouts);
-                let branches = if let Some(pass_options) = self.pass_options_for_current_turn(&game) {
+                let actor = game.state.player_at_turn.clone();
+                let branches = if let Some(pass_options) = self.pass_options_for_turn(&game, actor) {
                     let selected = self.pass_selection.selected().to_vec();
                     let pick_actions = build_pick_legal_actions(&pass_options, &selected);
                     pick_actions
@@ -622,7 +676,8 @@ impl Server {
                     .map(|(_, infos)| self.branch_score_for_infos(infos, acting_party.clone()))
                     .collect();
 
-                let advantages = if let Some(pass_options) = self.pass_options_for_current_turn(&game) {
+                let actor = game.state.player_at_turn.clone();
+                let advantages = if let Some(pass_options) = self.pass_options_for_turn(&game, actor) {
                     let selected = self.pass_selection.selected().to_vec();
                     let pick_scores: Vec<f32> = candidate_scores(&pass_options, &selected, &action_scores)
                         .into_iter()
@@ -702,6 +757,19 @@ mod tests {
         server
     }
 
+    fn setup_server_in_passing_turn_with_mismatched_root_pov() -> (Server, u8) {
+        let mut server = setup_server_in_passing_turn();
+        let active = server
+            .game
+            .as_ref()
+            .expect("game exists")
+            .state
+            .player_at_turn
+            .0;
+        server.pov = PlaceAtTable((active + 1) % 4);
+        (server, active)
+    }
+
     fn obs_from_response(resp: Response) -> ObservationJson {
         match resp {
             Response::Obs { obs, .. } => obs,
@@ -752,5 +820,23 @@ mod tests {
             other => panic!("expected advantages response, got {:?}", other),
         };
         assert_eq!(adv.len(), obs.legal_actions.len());
+    }
+
+    #[test]
+    fn observe_pov_and_step_support_sequential_pass_when_root_pov_differs() {
+        let (mut server, active) = setup_server_in_passing_turn_with_mismatched_root_pov();
+        let mut seat_obs = obs_from_response(server.handle(Request::ObservePov { pov: active }));
+        assert!(!seat_obs.legal_actions.is_empty());
+        assert!(seat_obs
+            .legal_actions
+            .iter()
+            .all(|la| la.action_token == crate::ml::observation::tokens::ACT_PASS_PICK_CARD));
+
+        let pick_idx = seat_obs.legal_actions[0].action_list_idx;
+        let root_obs_after = obs_from_response(server.handle(Request::Step { action_idx: pick_idx }));
+        assert!(!root_obs_after.legal_actions.is_empty());
+
+        seat_obs = obs_from_response(server.handle(Request::ObservePov { pov: active }));
+        assert!(!seat_obs.pass_selection_indices.is_empty());
     }
 }

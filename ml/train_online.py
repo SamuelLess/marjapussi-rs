@@ -16,7 +16,7 @@ Recommended starting point:
   python ml/train_online.py --rounds 100 --games-per-round 200 --workers 8 --mc-rollouts 4 --device cuda
 """
 
-import argparse, collections, json, math, os, random, sys, threading, time, warnings
+import argparse, collections, json, math, os, random, sys, threading, time, warnings, uuid
 import tomllib
 import ctypes
 
@@ -41,11 +41,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from model import ACTION_FEAT_DIM, MarjapussiNet
 from env import MarjapussiEnv, obs_to_tensors
 
-CKPT_DIR = Path(__file__).parent / "checkpoints"
-RUNS_DIR  = Path(__file__).parent / "runs"
+DEFAULT_CKPT_DIR = Path(__file__).parent / "checkpoints"
+DEFAULT_RUNS_DIR = Path(__file__).parent / "runs"
 DEFAULT_CONFIG_PATH = Path(__file__).parent / "config" / "train_online.toml"
-CKPT_DIR.mkdir(exist_ok=True)
-RUNS_DIR.mkdir(exist_ok=True)
 
 from train.utils import Log, Transition
 from train.pool import BatchInferenceServer, EnvPool
@@ -104,6 +102,32 @@ def _is_bidding_action(legal: list[dict]) -> bool:
 
 def _is_passing_action(legal: list[dict]) -> bool:
     return bool(legal and legal[0].get("action_token") in (43, 52))
+
+
+def atomic_torch_save(state_dict: dict, path: Path, retries: int = 5, delay_s: float = 0.05) -> None:
+    """
+    Atomically publish checkpoints so readers never see partially-written files.
+    Writes to a temp file in the same directory and then replaces target.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+
+    last_err: Exception | None = None
+    for _ in range(max(1, retries)):
+        try:
+            torch.save(state_dict, tmp)
+            os.replace(tmp, path)
+            return
+        except Exception as e:
+            last_err = e
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+            time.sleep(max(0.0, delay_s))
+
+    raise RuntimeError(f"Failed to atomically save checkpoint to {path}: {last_err}")
 
 
 def run_episode(
@@ -454,6 +478,8 @@ def train_online(
     points_normalizer: float = 420.0,
     passgame_base_reward: float = 115.0 / 420.0,
     step_delta_scale: float = 1.0 / 420.0,
+    checkpoints_dir: str | Path = DEFAULT_CKPT_DIR,
+    runs_dir: str | Path = DEFAULT_RUNS_DIR,
 ):
     configure_torch_runtime(device=device, workers=workers)
     use_amp = device.startswith("cuda")
@@ -466,6 +492,10 @@ def train_online(
         passgame_base_reward=passgame_base_reward,
         step_delta_scale=step_delta_scale,
     )
+    ckpt_dir = Path(checkpoints_dir)
+    runs_dir = Path(runs_dir)
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    runs_dir.mkdir(parents=True, exist_ok=True)
 
     if checkpoint and Path(checkpoint).exists():
         model.load_state_dict(torch.load(checkpoint, map_location=device))
@@ -474,7 +504,7 @@ def train_online(
     named_ckpt_path: Path | None = None
     if named_checkpoint:
         ncp = Path(named_checkpoint)
-        named_ckpt_path = ncp if ncp.is_absolute() else (CKPT_DIR / ncp)
+        named_ckpt_path = ncp if ncp.is_absolute() else (ckpt_dir / ncp)
         named_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
         Log.info(f"Named checkpoint target: {named_ckpt_path}")
 
@@ -507,11 +537,11 @@ def train_online(
     )
     Log.info(f"Params: {model.param_count():,}\n")
 
-    run_dir  = RUNS_DIR / f"online_{int(time.time())}"
+    run_dir  = runs_dir / f"online_{int(time.time())}"
     run_dir.mkdir(exist_ok=True)
     log_path = run_dir / "log.jsonl"
-    (RUNS_DIR / "latest").unlink(missing_ok=True)
-    try: (RUNS_DIR / "latest").symlink_to(run_dir, target_is_directory=True)
+    (runs_dir / "latest").unlink(missing_ok=True)
+    try: (runs_dir / "latest").symlink_to(run_dir, target_is_directory=True)
     except: pass
 
     best_diff = -9999.0
@@ -715,22 +745,22 @@ def train_online(
             avg_diff = eval_metrics["avg_diff"]
             print(f"           -> Point diff (100 games): {avg_diff:+.1f}")
             log_entry["avg_diff"] = avg_diff
-            torch.save(model.state_dict(), CKPT_DIR / f"online_round_{rnd+1}.pt")
+            atomic_torch_save(model.state_dict(), ckpt_dir / f"online_round_{rnd+1}.pt")
             if avg_diff > best_diff:
                 best_diff = avg_diff
-                torch.save(model.state_dict(), CKPT_DIR / "best.pt")
+                atomic_torch_save(model.state_dict(), ckpt_dir / "best.pt")
                 print(f"           -> New best: {best_diff:+.1f}")
                 
         # 50k games checkpoint (250 rounds * 200 games/round)
         if (rnd + 1) % 250 == 0:
             games_played = (rnd + 1) * games_per_round
             ckpt_name = f"model_{games_played // 1000}k.pt"
-            torch.save(model.state_dict(), CKPT_DIR / ckpt_name)
+            atomic_torch_save(model.state_dict(), ckpt_dir / ckpt_name)
             Log.info(f"Saved 50k milestone checkpoint: {ckpt_name}")
 
-        torch.save(model.state_dict(), CKPT_DIR / "latest.pt")
+        atomic_torch_save(model.state_dict(), ckpt_dir / "latest.pt")
         if named_ckpt_path is not None:
-            torch.save(model.state_dict(), named_ckpt_path)
+            atomic_torch_save(model.state_dict(), named_ckpt_path)
         with open(log_path, "a") as f:
             f.write(json.dumps({"event": "update", **log_entry}) + "\n")
 
@@ -742,7 +772,7 @@ def train_online(
             torch.cuda.empty_cache()
 
     Log.success(f"Done. Best test point diff: {best_diff:+.1f}")
-    Log.info(f"Checkpoint: {CKPT_DIR / 'latest.pt'}")
+    Log.info(f"Checkpoint: {ckpt_dir / 'latest.pt'}")
     if named_ckpt_path is not None:
         Log.info(f"Named checkpoint: {named_ckpt_path}")
 
@@ -808,6 +838,10 @@ if __name__ == "__main__":
                    help="Terminal reward magnitude for pass games")
     p.add_argument("--step-delta-scale", type=float, default=(1.0 / 420.0),
                    help="Scale for dense per-step point-delta reward")
+    p.add_argument("--checkpoints-dir", default=str(DEFAULT_CKPT_DIR),
+                   help="Directory for saving checkpoints (latest/best/round)")
+    p.add_argument("--runs-dir", default=str(DEFAULT_RUNS_DIR),
+                   help="Directory for run logs and latest symlink")
     args = p.parse_args()
     args = _apply_config_defaults(args, p)
 
@@ -845,4 +879,6 @@ if __name__ == "__main__":
         points_normalizer=args.points_normalizer,
         passgame_base_reward=args.passgame_base_reward,
         step_delta_scale=args.step_delta_scale,
+        checkpoints_dir=args.checkpoints_dir,
+        runs_dir=args.runs_dir,
     )

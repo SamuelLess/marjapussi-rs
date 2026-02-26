@@ -36,6 +36,10 @@ let ws = null;
 let gs = null;   // current game_state from server
 let ainfo = {};     // AI info keyed by seat
 let hs = new Set();   // human-controlled seats
+let seatViews = {};   // per-seat observations for human-controlled seats
+let controllers = {}; // per-seat controller config from server
+let checkpointOptions = [];
+let torchOk = true;
 let auto = false;
 let autoTm = null;
 
@@ -56,7 +60,7 @@ let prevTrickKey = '';               // CSV of trick card indices
 let lastTokenLen = 0;                // last decoded event_tokens length
 
 // Bid stepper and Passing state
-let selectedPassCards = new Set();
+let selectedPassCardsBySeat = [new Set(), new Set(), new Set(), new Set()];
 let bidStepValue = 120;
 
 // â”€â”€ 2. WebSocket / connection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -71,9 +75,19 @@ function connect() {
     const m = JSON.parse(ev.data);
     switch (m.type) {
       case 'game_state':
-        gs = m.data; ainfo = m.ai_info || {};
+        gs = m.data || null;
+        ainfo = m.ai_info || {};
+        controllers = gs?.controllers || {};
+        seatViews = gs?.seat_views || {};
+        checkpointOptions = gs?.checkpoints || checkpointOptions;
+        torchOk = gs?.torch_ok !== false;
+        hs = new Set(gs?.human_seats || []);
         render();
         if (debugMode) send({ cmd: 'debug_state' });
+        break;
+      case 'checkpoints':
+        checkpointOptions = m.items || [];
+        renderAI(gs?.obs || null);
         break;
       case 'debug_state':
         // Server now sends hands, tricks, bitmasks directly
@@ -86,6 +100,7 @@ function connect() {
         dbgPredImpossibleMass = m.predicted_impossible_mass || {};
         dbgPredHiddenLoss = m.predicted_hidden_loss || null;
         dbgInference = m.inference_stats || {};
+        if (m.seat_policy) ainfo = m.seat_policy;
         renderDebugPanel(gs?.obs);
         render(); // update table face-up cards
         break;
@@ -192,6 +207,27 @@ function getActiveSeat(obs) {
   return obs.active_player ?? -1;
 }
 
+function ctrlForSeat(seat) {
+  return controllers?.[String(seat)] || controllers?.[seat] || null;
+}
+
+function effectiveMode(seat) {
+  const ctrl = ctrlForSeat(seat);
+  if (!ctrl) return hs.has(seat) ? 'human' : 'heuristic';
+  return ctrl.effective_mode || ctrl.mode || 'heuristic';
+}
+
+function seatObs(seat) {
+  if (seat === 0) return gs?.obs || null;
+  return seatViews?.[String(seat)] || seatViews?.[seat] || null;
+}
+
+function actionObsForSeat(activeSeat) {
+  if (activeSeat === 0) return gs?.obs || null;
+  if (effectiveMode(activeSeat) === 'human') return seatObs(activeSeat);
+  return null;
+}
+
 // â”€â”€ 6. Main render orchestrator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function render() {
@@ -210,6 +246,7 @@ function render() {
 
   // Hands (selective re-render)
   for (let s = 0; s < 4; s++) renderHand(s, obs);
+  renderTrick(obs);
 
   // Active player ring
   const active = getActiveSeat(obs);
@@ -220,9 +257,9 @@ function render() {
   // Bid/action area (shows active player's non-card actions if human or debug)
   renderBidArea(obs, active);
 
-  // Auto-play AI turns if not in debug mode
-  if (active >= 0 && !debugMode) {
-    const isHumanActive = hs.size === 0 ? active === 0 : hs.has(active);
+  // Auto-play AI turns only when autoplay is enabled.
+  if (active >= 0 && !debugMode && auto) {
+    const isHumanActive = effectiveMode(active) === 'human';
     if (!isHumanActive) {
       // It's the AI's turn. Throttle slightly for visual pacing
       setTimeout(() => {
@@ -254,16 +291,22 @@ function renderHand(s, obs) {
 
   const active = getActiveSeat(obs);
   const isMyTurn = active === s;
-  const isHuman = hs.size === 0 ? s === 0 : hs.has(s);
+  const isHuman = effectiveMode(s) === 'human';
+  const activeObs = isMyTurn ? (actionObsForSeat(active) || obs) : null;
   const canAct = isMyTurn && (isHuman || debugMode);
-  const isPassing = (obs.phase === "PassingForth" || obs.phase === "PassingBack");
-  const hasSequentialPass = isPassing && (obs.legal_actions || []).some(
+  const phaseObs = activeObs || obs;
+  const isPassing = (phaseObs.phase === "PassingForth" || phaseObs.phase === "PassingBack");
+  const hasSequentialPass = isPassing && (phaseObs.legal_actions || []).some(
     la => la.action_token === 52 && la.card_idx != null
   );
+  const selectedPassCards = selectedPassCardsBySeat[s];
 
-  if (s === 0) {
+  if (isHuman && isMyTurn) {
     if (isPassing) {
-      if (hasSequentialPass) selectedPassCards = new Set(obs.pass_selection_indices || []);
+      if (hasSequentialPass) {
+        selectedPassCards.clear();
+        (phaseObs.pass_selection_indices || []).forEach(ci => selectedPassCards.add(ci));
+      }
     } else {
       selectedPassCards.clear();
     }
@@ -271,16 +314,24 @@ function renderHand(s, obs) {
 
   // Legal actions mapping (only relevant for the active player)
   const lm = new Map();
-  if (isMyTurn) {
-    (obs.legal_actions || []).forEach(la => {
+  if (isMyTurn && activeObs) {
+    (activeObs.legal_actions || []).forEach(la => {
       if (la.card_idx != null) lm.set(la.card_idx, la.action_list_idx);
     });
   }
 
-  // Hands rendering mode
-  // P0 uses observation hand, hidden seats use debug-only hands from debug_state.
+  // Hand visibility policy:
+  // - Debug mode: full information (all seats face-up via debug payload where available).
+  // - Normal mode: only the currently active human seat is face-up.
   const debugHand = allHands[s] || allHands[String(s)] || null;
-  const faceUpCards = (s === 0) ? obs.my_hand_indices : (debugMode ? debugHand : null);
+  const seatView = seatObs(s);
+  const canShowHumanSeat = isHuman && isMyTurn;
+  let faceUpCards = null;
+  if (debugMode) {
+    faceUpCards = (s === 0) ? obs.my_hand_indices : debugHand;
+  } else if (canShowHumanSeat) {
+    faceUpCards = (s === 0) ? obs.my_hand_indices : seatView?.my_hand_indices;
+  }
 
   if (faceUpCards?.length) {
     const newKey = [...faceUpCards].sort((a, b) => a - b).join(',');
@@ -319,12 +370,19 @@ function renderHand(s, obs) {
         // Always attach the listener so cached DOM elements still react!
         card.addEventListener('click', () => {
           // Re-evaluate current state dynamically (since DOM nodes persist)
-          const currAi = lm.get(i);
-          const currPassing = (gs?.obs?.phase === "PassingForth" || gs?.obs?.phase === "PassingBack");
-          const currSeqPass = currPassing && (gs?.obs?.legal_actions || []).some(
+          const activeNow = getActiveSeat(gs?.obs);
+          const currActionObs = activeNow >= 0 ? (actionObsForSeat(activeNow) || gs?.obs) : gs?.obs;
+          const currLm = new Map();
+          (currActionObs?.legal_actions || []).forEach(la => {
+            if (la.card_idx != null) currLm.set(la.card_idx, la.action_list_idx);
+          });
+          const currAi = currLm.get(i);
+          const currPassing = (currActionObs?.phase === "PassingForth" || currActionObs?.phase === "PassingBack");
+          const currSeqPass = currPassing && (currActionObs?.legal_actions || []).some(
             la => la.action_token === 52 && la.card_idx != null
           );
-          const legalNow = canAct && (
+          const canActNow = (activeNow === s) && (effectiveMode(s) === 'human' || debugMode);
+          const legalNow = canActNow && (
             currAi !== undefined || (currPassing && (currSeqPass ? selectedPassCards.has(i) : true))
           );
           if (!legalNow) return; // ignore clicks if currently not legal
@@ -337,6 +395,17 @@ function renderHand(s, obs) {
             } else {
               if (selectedPassCards.has(i)) selectedPassCards.delete(i);
               else if (selectedPassCards.size < 4) selectedPassCards.add(i);
+              if (selectedPassCards.size === 4) {
+                const chosen = [...selectedPassCards].sort((a, b) => a - b);
+                const match = (currActionObs?.legal_actions || []).find(la => {
+                  const pc = (la.pass_cards || []).slice().sort((a, b) => a - b);
+                  return pc.length === 4 && pc.every((v, idx) => v === chosen[idx]);
+                });
+                if (match) {
+                  send({ cmd: 'human_action', action_list_idx: match.action_list_idx });
+                  selectedPassCards.clear();
+                }
+              }
               render();
             }
           } else if (currAi !== undefined) {
@@ -458,7 +527,7 @@ function renderBidArea(obs, active) {
   const ba = document.getElementById('bid-area');
   if (!obs || active < 0) { ba.innerHTML = ''; return; }
 
-  const isHuman = hs.size === 0 ? active === 0 : hs.has(active);
+  const isHuman = effectiveMode(active) === 'human';
   const canAct = isHuman || debugMode;
   if (!canAct) {
     ba.innerHTML = '';
@@ -469,17 +538,19 @@ function renderBidArea(obs, active) {
   // Move bid area to active player so buttons appear under their cards
   document.getElementById('p' + active).appendChild(ba);
 
-  const legal = obs.legal_actions || [];
+  const actObs = actionObsForSeat(active) || obs;
+  const legal = actObs.legal_actions || [];
+  const selectedPassCards = selectedPassCardsBySeat[active];
 
   // Passing Cards (Gib ab)
-  const isPassing = (obs.phase === "PassingForth" || obs.phase === "PassingBack");
+  const isPassing = (actObs.phase === "PassingForth" || actObs.phase === "PassingBack");
   if (canAct && isPassing) {
     ba.dataset.ahash = ''; // force re-render on selection changes
     ba.innerHTML = '';
     const hasSequentialPass = legal.some(la => la.action_token === 52 && la.card_idx != null);
     if (hasSequentialPass) {
-      const selected = obs.pass_selection_indices || [];
-      const target = obs.pass_selection_target || 4;
+      const selected = actObs.pass_selection_indices || [];
+      const target = actObs.pass_selection_target || 4;
       const txt = document.createElement('div');
       txt.className = 'bid-btn act';
       txt.style.opacity = '1';
@@ -497,7 +568,11 @@ function renderBidArea(obs, active) {
         btn.textContent = `Schieben (4/4)`;
         const selArr = [...selectedPassCards].sort((a, b) => a - b);
         btn.onclick = () => {
-          send({ cmd: 'debug_pass', card_indices: selArr });
+          const match = legal.find(la => {
+            const pc = (la.pass_cards || []).slice().sort((a, b) => a - b);
+            return pc.length === 4 && pc.every((v, idx) => v === selArr[idx]);
+          });
+          if (match) send({ cmd: 'human_action', action_list_idx: match.action_list_idx });
           selectedPassCards.clear();
         };
       } else {
@@ -802,58 +877,104 @@ function renderAI(obs) {
   const names = ['Du (P0)', 'Links (P1)', 'Partner (P2)', 'Rechts (P3)'];
 
   for (let s = 0; s < 4; s++) {
-    const inf = ainfo[s] || {};
+    const inf = ainfo[s] || ainfo[String(s)] || {};
+    const ctrl = ctrlForSeat(s) || {};
     const probs = inf.probs || [];
-    const ent = inf.entropy ?? 0;
-    const ep = Math.min(ent / Math.log(Math.max(probs.length, 2)) * 100, 100);
+    const ent = Number(inf.entropy ?? 0);
+    const ep = probs.length ? Math.min(ent / Math.log(Math.max(probs.length, 2)) * 100, 100) : 0;
     const ec = ep < 30 ? 'hl' : ep < 65 ? 'hm' : 'hh';
-    const isH = hs.has(s);
+    const mode = ctrl.mode || inf.controller || 'heuristic';
+    const effMode = ctrl.effective_mode || inf.effective_controller || mode;
+    const isH = effMode === 'human';
+    const cp = ctrl.checkpoint || inf.checkpoint || 'latest.pt';
+    const status = inf.status || '';
+    const err = inf.error || '';
+    const hidden = inf.hidden_summary || {};
 
     const d = document.createElement('div');
     d.className = 'ais';
     d.innerHTML =
       `<div class="aih">` +
-      `<div class="ain">${names[s]}${isH ? ' ðŸ‘¤' : ''}</div>` +
+      `<div class="ain">${names[s]}${isH ? ' (Human)' : ''}</div>` +
       `<div style="display:flex;align-items:center;gap:4px">` +
       `<span style="font-size:10px;color:var(--dim)">H</span>` +
       `<div class="hb"><div class="hf ${ec}" style="width:${ep.toFixed(0)}%"></div></div>` +
       `</div>` +
       `</div>` +
       `<div class="prows"></div>` +
-      (s > 0
-        ? `<button class="tob${isH ? ' on' : ''}" data-s="${s}">${isH ? 'âœ“ Du' : 'Ãœbernehmen'}</button>`
-        : '');
+      `<div class="ctrl-row">` +
+      `<select class="ctrl-mode" data-seat="${s}">` +
+      `<option value="human"${mode === 'human' ? ' selected' : ''}>Human</option>` +
+      `<option value="heuristic"${mode === 'heuristic' ? ' selected' : ''}>Heuristic</option>` +
+      `<option value="model"${mode === 'model' ? ' selected' : ''}>Model</option>` +
+      `</select>` +
+      `<select class="ctrl-ckpt" data-seat="${s}" ${mode === 'model' ? '' : 'disabled'}></select>` +
+      `</div>` +
+      `<div class="ai-meta">${status || effMode}${err ? ` | ${err}` : ''}</div>`;
 
-    // Top-4 action probabilities â€” with full label from server
+    const ckSel = d.querySelector('.ctrl-ckpt');
+    const ckList = checkpointOptions.length ? checkpointOptions : ['latest.pt'];
+    ckList.forEach(name => {
+      const op = document.createElement('option');
+      op.value = name;
+      op.textContent = name;
+      if (cp === name) op.selected = true;
+      ckSel.appendChild(op);
+    });
+
+    d.querySelector('.ctrl-mode')?.addEventListener('change', ev => {
+      const seat = +ev.target.dataset.seat;
+      const nextMode = ev.target.value;
+      const ckpt = d.querySelector('.ctrl-ckpt')?.value || 'latest.pt';
+      send({ cmd: 'set_controller', seat, mode: nextMode, checkpoint: ckpt });
+    });
+    d.querySelector('.ctrl-ckpt')?.addEventListener('change', ev => {
+      const seat = +ev.target.dataset.seat;
+      const ckpt = ev.target.value;
+      const modeEl = d.querySelector('.ctrl-mode');
+      if (modeEl?.value === 'model') {
+        send({ cmd: 'set_controller', seat, mode: 'model', checkpoint: ckpt });
+      }
+    });
+
+    // Top-4 action probabilities with chosen-action highlight if available
     const topProbs = [...probs].sort((a, b) => b.prob - a.prob).slice(0, 4);
     const maxP = topProbs[0]?.prob ?? 1;
     const pr = d.querySelector('.prows');
     topProbs.forEach(p => {
       const r = document.createElement('div'); r.className = 'pr';
       const barW = (p.prob / maxP * 70).toFixed(0);
-      // Use full label from server (includes suit, bid value, etc.)
       r.innerHTML =
         `<div class="pl" title="${p.label}">${p.label}</div>` +
         `<div class="pb" style="width:${barW}px"></div>` +
         `<div class="pp">${(p.prob * 100).toFixed(0)}%</div>`;
+      if (inf.chosen_label && inf.chosen_label === p.label) r.classList.add('top');
       pr.appendChild(r);
     });
 
-    d.querySelector('.tob')?.addEventListener('click', ev => {
-      const st = +ev.target.dataset.s;
-      hs.has(st) ? hs.delete(st) : hs.add(st);
-      send({ cmd: 'set_seat', seat: st, human: hs.has(st) });
-      render();
-    });
+    if (hidden.left || hidden.partner || hidden.right || hidden.hidden_loss) {
+      const hsWrap = document.createElement('div');
+      hsWrap.className = 'ai-hidden';
+      const l = hidden.left || {};
+      const p = hidden.partner || {};
+      const r = hidden.right || {};
+      hsWrap.textContent =
+        `HiddenMass L:${Number(l.impossible_mass || 0).toFixed(3)} P:${Number(p.impossible_mass || 0).toFixed(3)} R:${Number(r.impossible_mass || 0).toFixed(3)}`;
+      d.appendChild(hsWrap);
+
+      if (hidden.hidden_loss) {
+        const h = hidden.hidden_loss;
+        const loss = document.createElement('div');
+        loss.className = 'ai-hidden';
+        loss.textContent = `HiddenLoss T:${Number(h.total || 0).toFixed(3)} Pos:${Number(h.pos_bce || 0).toFixed(3)} Imp:${Number(h.impossible_bce || 0).toFixed(3)}`;
+        d.appendChild(loss);
+      }
+    }
+
     ct.appendChild(d);
   }
 
-  // Sync takeover buttons (may be in the board too)
-  document.querySelectorAll('.tob[data-s]').forEach(b => {
-    const st = +b.dataset.s;
-    b.textContent = hs.has(st) ? 'âœ“ Du' : 'Ãœbernehmen';
-    b.className = 'tob' + (hs.has(st) ? ' on' : '');
-  });
+  if (!checkpointOptions.length) send({ cmd: 'list_checkpoints' });
 }
 
 // â”€â”€ 13. Debug panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1017,27 +1138,36 @@ function renderDebugPanel(obs) {
     });
   }
 
-  // â”€â”€ Section 3: AI policy (symbolic reasoning check) â”€â”€
-  const ai0 = ainfo[0] || {};
-  if (ai0.probs?.length) {
-    const aTitle = mk('div', 'dbg-section-title', `ðŸ§  KI-Policy (P0, Entropie: ${(ai0.entropy ?? 0).toFixed(2)})`);
-    p.appendChild(aTitle);
-    const allProbs = [...(ai0.probs || [])].sort((a, b) => b.prob - a.prob);
+  // Section 3: Per-seat policy debug
+  const aTitle = mk('div', 'dbg-section-title', 'KI Policy Pro Seat');
+  p.appendChild(aTitle);
+  for (let s = 0; s < 4; s++) {
+    const ai = ainfo[s] || ainfo[String(s)] || {};
+    const probs = ai.probs || [];
+    const hdr = mk(
+      'div',
+      'dbg-seat-lbl',
+      `${PNAMES[s]} | ${ai.effective_controller || ai.controller || 'n/a'} | H=${Number(ai.entropy || 0).toFixed(2)}`
+    );
+    p.appendChild(hdr);
+    if (!probs.length) continue;
+    const allProbs = [...probs].sort((a, b) => b.prob - a.prob).slice(0, 6);
     const maxP = allProbs[0]?.prob ?? 1;
     const pTable = mk('div', 'dbg-policy-table');
-    allProbs.forEach((p, i) => {
+    allProbs.forEach((rowP, i) => {
       const row = mk('div', 'dbg-policy-row' + (i === 0 ? ' top' : ''));
-      const barW = Math.round(p.prob / maxP * 120);
-      const pct = (p.prob * 100).toFixed(1);
+      const barW = Math.round(rowP.prob / maxP * 120);
+      const pct = (rowP.prob * 100).toFixed(1);
       row.innerHTML =
-        `<span class="dbg-plbl" title="${p.label}">${p.label}</span>` +
+        `<span class="dbg-plbl" title="${rowP.label}">${rowP.label}</span>` +
         `<span class="dbg-pbar" style="width:${barW}px"></span>` +
         `<span class="dbg-ppct">${pct}%</span>`;
       pTable.appendChild(row);
     });
     p.appendChild(pTable);
-  } else if (TORCH_OK === false) {
-    p.appendChild(mk('div', 'dbg-no-model', 'âš  Kein Modell geladen â€” zufÃ¤llige Aktionen'));
+  }
+  if (!torchOk) {
+    p.appendChild(mk('div', 'dbg-no-model', 'Kein Modell geladen - heuristische Steuerung aktiv'));
   }
 }
 
@@ -1057,13 +1187,18 @@ document.getElementById('dbg').addEventListener('change', ev => {
   if (gs) { send({ cmd: 'debug_state' }); render(); }
 });
 
-document.getElementById('bn').addEventListener('click', () => {
-  hs.clear(); lastTokenLen = 0;
+function clearLocalState() {
+  lastTokenLen = 0;
   prevHand.fill(''); prevTrickKey = '';
   _lastTrump = undefined;
   document.getElementById('evlog').innerHTML = '';
   document.getElementById('last-trick-row').style.display = 'none';
   document.getElementById('bid-area').dataset.ahash = '';
+  selectedPassCardsBySeat.forEach(set => set.clear());
+}
+
+document.getElementById('bn').addEventListener('click', () => {
+  clearLocalState();
   send({ cmd: 'new_game' });
   evLog('ðŸŽ´', 'Neues Spiel gestartet.');
 });
@@ -1071,11 +1206,34 @@ document.getElementById('bn').addEventListener('click', () => {
 document.getElementById('bp').addEventListener('click', () => send({ cmd: 'proceed' }));
 
 document.getElementById('ba').addEventListener('click', () => {
-  auto = !auto;
+  auto = true;
   const b = document.getElementById('ba');
-  b.textContent = auto ? 'â¸ Pause' : 'â–¶ Auto';
-  b.className = 'btn ' + (auto ? 'ba' : 'bs');
-  if (auto) tick(); else clearTimeout(autoTm);
+  b.textContent = 'Auto LÃ¤uft';
+  b.className = 'btn ba';
+  tick();
+});
+
+document.getElementById('bq')?.addEventListener('click', () => {
+  auto = false;
+  clearTimeout(autoTm);
+  const b = document.getElementById('ba');
+  b.textContent = 'â–¶ Auto';
+  b.className = 'btn bs ba';
+});
+
+document.getElementById('br')?.addEventListener('click', () => {
+  clearLocalState();
+  const seedText = (document.getElementById('seed')?.value || '').trim();
+  if (seedText === '') {
+    send({ cmd: 'new_game' });
+    return;
+  }
+  const seed = Number(seedText);
+  if (!Number.isFinite(seed)) {
+    evLog('âŒ', 'Seed muss eine Zahl sein', 'err-ev');
+    return;
+  }
+  send({ cmd: 'new_game', seed: Math.trunc(seed) });
 });
 
 function tick() {
