@@ -29,7 +29,7 @@ ensure-venv:
 install-ml-deps: ensure-venv
     @echo "Preparing Python environment using: {{python}}"
     {{python}} -m pip install --upgrade pip
-    {{python}} -m pip install -r requirements.txt -r ml/requirements.txt
+    {{python}} -m pip install -e ".[dev]"
     {{python}} ml/install_torch.py
 
 # Create venv, install deps, and build optimized Rust backend for ML.
@@ -93,6 +93,21 @@ train-65k run_name="scratch_65k": setup-ml
       cp -f "{{ml_server_bin}}" "$$run_bin"; \
       echo "Isolated run root: $$run_root"; \
       ML_SERVER_BIN="$$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 512 --games-per-round 128 --workers 32 --mc-rollouts 4 --device cuda --eval-every 16 --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3 --checkpoints-dir "$$run_ckpt" --runs-dir "$$run_logs" --named-checkpoint "$$run_label"_selfplay_final.pt
+
+# Fast 4k profile: 64 rounds x 64 games (4,096 total self-play games)
+train-4k run_name="scratch_4k": setup-ml
+    @echo "Running fast 4k training profile using virtual environment python: {{python}}"
+    @run_label="{{run_name}}"; \
+      case "$$run_label" in run_name=*) run_label="$${run_label#run_name=}" ;; esac; \
+      run_root="ml/runs/$$run_label"; \
+      run_ckpt="$$run_root/checkpoints"; \
+      run_logs="$$run_root/logs"; \
+      run_bin_dir="$$run_root/bin"; \
+      run_bin="$$run_bin_dir/$$(basename "{{ml_server_bin}}")"; \
+      mkdir -p "$$run_ckpt" "$$run_logs" "$$run_bin_dir"; \
+      cp -f "{{ml_server_bin}}" "$$run_bin"; \
+      echo "Isolated run root: $$run_root"; \
+      ML_SERVER_BIN="$$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 64 --games-per-round 64 --workers 16 --mc-rollouts 2 --device cuda --eval-every 8 --ppo-epochs 2 --min-ppo-epochs 1 --max-ppo-epochs 3 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.20 --max-adv-calls-per-episode 2 --checkpoints-dir "$$run_ckpt" --runs-dir "$$run_logs" --named-checkpoint "$$run_label"_selfplay_final.pt
 
 # Alias for explicit scratch baseline naming.
 train-65k-scratch: train-65k
@@ -199,8 +214,8 @@ resume-train run_name="scratch_65k" checkpoint_name="latest" start_round="10": s
 #   just ui checkpoint=my_run_best.pt port=18765
 ui checkpoint="latest" port="8765": install-ml-deps ensure-ml-server-ui-runtime
     @ui_ckpt="{{checkpoint}}"; \
-      case "$$ui_ckpt" in checkpoint=*) ui_ckpt="$${ui_ckpt#checkpoint=}" ;; esac; \
+      case "$ui_ckpt" in checkpoint=*) ui_ckpt="${ui_ckpt#checkpoint=}" ;; esac; \
       ui_port="{{port}}"; \
-      case "$$ui_port" in port=*) ui_port="$${ui_port#port=}" ;; esac; \
-      echo "Starting UI server (http://localhost:$$ui_port) with checkpoint=$$ui_ckpt ..."; \
-      ML_SERVER_BIN="{{ui_ml_server_bin}}" {{python}} ml/ui_server.py --port "$$ui_port" --checkpoint "$$ui_ckpt"
+      case "$ui_port" in port=*) ui_port="${ui_port#port=}" ;; esac; \
+      echo "Starting UI server (http://localhost:$ui_port) with checkpoint=$ui_ckpt ..."; \
+      ML_SERVER_BIN="{{ui_ml_server_bin}}" {{python}} ml/ui_server.py --port "$ui_port" --checkpoint "$ui_ckpt"

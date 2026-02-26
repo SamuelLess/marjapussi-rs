@@ -16,6 +16,9 @@
   --card-r: 7px;
   --r: 8px;
   --gap: 10px;
+  --split-w: 6px;
+  --side-w: 260px;
+  --col3-w: 220px;
   --font: "Inter", system-ui, sans-serif;
 }
 
@@ -216,7 +219,7 @@ body {
 #main {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 260px 220px;
+  grid-template-columns: minmax(0, 1fr) var(--side-w) var(--col3-w);
   overflow: hidden;
   min-height: 0
 }
@@ -224,10 +227,45 @@ body {
 #board {
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--bd);
   overflow: hidden;
   padding: var(--gap);
   gap: var(--gap)
+}
+
+body.col-resizing {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+#side,
+#col3 {
+  position: relative;
+}
+
+.resize-handle {
+  position: absolute;
+  top: 0;
+  left: calc(-1 * var(--split-w) / 2);
+  width: var(--split-w);
+  height: 100%;
+  cursor: col-resize;
+  z-index: 8;
+  background: transparent;
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 35%;
+  left: 2px;
+  right: 2px;
+  height: 30%;
+  border-radius: 999px;
+  background: rgba(139, 148, 158, 0.3);
+}
+
+.resize-handle:hover::after {
+  background: rgba(88, 166, 255, 0.55);
 }
 
 /* Score bar */
@@ -1003,9 +1041,12 @@ body {
 
 @media (max-width: 1360px) {
   #main {
-    grid-template-columns: 1fr 260px;
+    grid-template-columns: minmax(0, 1fr) var(--side-w);
   }
   #col3 {
+    display: none;
+  }
+  #handle-side {
     display: none;
   }
 }
@@ -1024,6 +1065,10 @@ body {
   }
   #main {
     grid-template-columns: 1fr;
+  }
+  #handle-main,
+  #handle-side {
+    display: none;
   }
   #side {
     border-right: none;

@@ -18,6 +18,8 @@ class UiServerSmokeTest(unittest.TestCase):
         self.assertIn("/ui/emoji_map.js", html)
         self.assertIn("UI_GLYPHS", js)
         self.assertIn('id="view-seat"', html)
+        self.assertIn('id="handle-main"', html)
+        self.assertIn('id="handle-side"', html)
 
     def test_action_label_formats_card_and_bid(self):
         self.assertTrue(ui_server.action_label({"action_token": 40, "card_idx": 8}).startswith("Play "))

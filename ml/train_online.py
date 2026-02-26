@@ -481,6 +481,7 @@ def train_online(
     max_adv_calls_per_episode: int = 1,
     hidden_loss_weight: float = 0.3,
     impossible_penalty_weight: float = 2.0,
+    hidden_count_weight: float = 0.1,
     forced_imitation_weight: float = 0.5,
     forced_imitation_decay_rounds: int = 128,
     named_checkpoint: str | None = None,
@@ -533,7 +534,8 @@ def train_online(
     )
     Log.info(
         f"Hidden-state aux loss: weight={hidden_loss_weight:.2f}, "
-        f"impossible_penalty={impossible_penalty_weight:.2f}"
+        f"impossible_penalty={impossible_penalty_weight:.2f}, "
+        f"count_weight={hidden_count_weight:.2f}"
     )
     Log.info(
         f"Forced-action imitation: base_weight={forced_imitation_weight:.2f}, "
@@ -679,6 +681,7 @@ def train_online(
                     train_phase=train_phase,
                     hidden_loss_weight=hidden_loss_weight,
                     impossible_penalty_weight=impossible_penalty_weight,
+                    hidden_count_weight=hidden_count_weight,
                     forced_imitation_weight=max(
                         0.05,
                         forced_imitation_weight
@@ -758,7 +761,7 @@ def train_online(
         print(f"  - Samples:  {n_trans} transitions")
         print(f"  - OptEpochs:{epoch}")
         print(f"  - Losses:   Total: {avg_loss.get('total',0):.4f} | Pol: {avg_loss.get('policy',0):.4f} | Imit: {avg_loss.get('forced_imitation',0):.4f} | Val: {avg_loss.get('value',0):.4f} | Ent: {avg_loss.get('entropy',0):.4f} | Pts: {avg_loss.get('pts',0):.4f} | Hidden: {avg_loss.get('hidden',0):.4f} | KL: {avg_loss.get('approx_kl',0):.4f} | Clip: {avg_loss.get('clipfrac',0):.3f}")
-        print(f"  - HiddenAux: PosBCE: {avg_loss.get('hidden_pos_loss',0):.4f} | ImpBCE: {avg_loss.get('hidden_impossible_loss',0):.4f} | PosAcc: {avg_loss.get('hidden_pos_acc',0):.3f} | ImpossibleMass: {avg_loss.get('impossible_mass',0):.3f}")
+        print(f"  - HiddenAux: PosBCE: {avg_loss.get('hidden_pos_loss',0):.4f} | ImpBCE: {avg_loss.get('hidden_impossible_loss',0):.4f} | Count: {avg_loss.get('hidden_count_loss',0):.4f} | PosAcc: {avg_loss.get('hidden_pos_acc',0):.3f} | ImpossibleMass: {avg_loss.get('impossible_mass',0):.3f}")
         print(f"  - Time:     Sim: {gen_time:.1f}s | Opt: {train_time:.1f}s")
 
         log_entry = {"round": rnd+1, "stage": stage, "n_games": games_per_round,
@@ -850,6 +853,8 @@ if __name__ == "__main__":
                    help="Weight of hidden-hand auxiliary loss in total loss")
     p.add_argument("--impossible-penalty-weight", type=float, default=2.0,
                    help="Penalty multiplier for predicting cards that are impossible by symbolic constraints")
+    p.add_argument("--hidden-count-weight", type=float, default=0.1,
+                   help="Weight for hidden-card count consistency loss on possible cards")
     p.add_argument("--forced-imitation-weight", type=float, default=0.5,
                    help="Base weight for imitation loss on heuristic-forced actions")
     p.add_argument("--forced-imitation-decay-rounds", type=int, default=128,
@@ -899,6 +904,7 @@ if __name__ == "__main__":
         max_adv_calls_per_episode=args.max_adv_calls_per_episode,
         hidden_loss_weight=args.hidden_loss_weight,
         impossible_penalty_weight=args.impossible_penalty_weight,
+        hidden_count_weight=args.hidden_count_weight,
         forced_imitation_weight=args.forced_imitation_weight,
         forced_imitation_decay_rounds=args.forced_imitation_decay_rounds,
         named_checkpoint=args.named_checkpoint,

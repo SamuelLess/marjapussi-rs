@@ -12,6 +12,7 @@ def train_step(
     train_phase: str = "trick",
     hidden_loss_weight: float = 0.3,
     impossible_penalty_weight: float = 2.0,
+    hidden_count_weight: float = 0.1,
     forced_imitation_weight: float = 0.5,
 ) -> dict:
     model.train()
@@ -98,6 +99,7 @@ def train_step(
         hidden_loss = torch.tensor(0.0, device=logits.device)
         hidden_pos_loss = torch.tensor(0.0, device=logits.device)
         hidden_impossible_loss = torch.tensor(0.0, device=logits.device)
+        hidden_count_loss = torch.tensor(0.0, device=logits.device)
         hidden_pos_acc = torch.tensor(0.0, device=logits.device)
         impossible_mass = torch.tensor(0.0, device=logits.device)
         if hidden_target is not None and hidden_possible is not None:
@@ -134,7 +136,21 @@ def train_step(
             else:
                 impossible_loss = torch.tensor(0.0, device=logits.device)
 
-            hidden_loss = pos_loss + impossible_penalty_weight * impossible_loss
+            # Count-consistency loss:
+            # encourage the model to assign the right total card mass per hidden seat
+            # over only currently possible cards.
+            cards_rem = batch.get("obs_a", {}).get("cards_rem")
+            if cards_rem is not None:
+                hidden_probs = torch.sigmoid(card_logits)
+                possible_mass = (hidden_probs * hidden_possible).sum(dim=-1)  # [B, 3]
+                target_mass = (cards_rem[:, 1:4] * 9.0).float()
+                hidden_count_loss = F.smooth_l1_loss(possible_mass, target_mass)
+
+            hidden_loss = (
+                pos_loss
+                + impossible_penalty_weight * impossible_loss
+                + hidden_count_weight * hidden_count_loss
+            )
         
         loss = (
             policy_loss
@@ -172,6 +188,7 @@ def train_step(
             "hidden_impossible_loss": float('nan'),
             "hidden_pos_acc": float('nan'),
             "impossible_mass": float('nan'),
+            "hidden_count_loss": float('nan'),
             "approx_kl": float('nan'),
             "clipfrac": float('nan'),
             "forced_imitation": float('nan'),
@@ -206,6 +223,7 @@ def train_step(
         "hidden_impossible_loss": hidden_impossible_loss.item() if grads_valid else float('nan'),
         "hidden_pos_acc": hidden_pos_acc.item() if grads_valid else float('nan'),
         "impossible_mass": impossible_mass.item() if grads_valid else float('nan'),
+        "hidden_count_loss": hidden_count_loss.item() if grads_valid else float('nan'),
         "approx_kl": approx_kl.item() if grads_valid else float('nan'),
         "clipfrac": clipfrac.item() if grads_valid else float('nan'),
         "forced_imitation": forced_imitation_loss.item() if grads_valid else float('nan'),

@@ -14,6 +14,14 @@ dependencies = [
     "websockets",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
 [tool.setuptools]
 packages = []
 py-modules = []
+
+[tool.pytest.ini_options]
+testpaths = ["ml/tests"]

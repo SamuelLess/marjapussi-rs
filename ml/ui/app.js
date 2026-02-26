@@ -57,6 +57,8 @@ let autoTm = null;
 let viewSeat = 0;
 let pendingViewSeat = null;
 let followActiveSeat = true;
+let preferredManualViewSeat = 0;
+const UI_PREFS_KEY = 'marjapussi.ui.prefs.v1';
 
 let debugMode = false;
 let allHands = {};  // from debug_state
@@ -106,6 +108,12 @@ function connect() {
           const cp = controllers[k]?.checkpoint;
           if (cp != null && pendingSeatCheckpoint[k] === cp) delete pendingSeatCheckpoint[k];
         });
+        const active = getActiveSeat(gs?.obs || null);
+        if (followActiveSeat && active >= 0) {
+          requestViewSeat(active);
+        } else if (!followActiveSeat && viewSeat !== preferredManualViewSeat) {
+          requestViewSeat(preferredManualViewSeat);
+        }
         render();
         if (debugMode) send({ cmd: 'debug_state' });
         break;
@@ -286,6 +294,147 @@ function updateTurnState(obs, activeSeat, tableViewSeat) {
   const activeLabel = PNAMES[activeSeat] || `P${activeSeat}`;
   const viewLabel = PNAMES[tableViewSeat] || `P${tableViewSeat}`;
   el.textContent = `Aktiv: ${activeLabel} (${mode}) | View: ${viewLabel} | Input: ${canAct ? 'frei' : 'gesperrt'}`;
+}
+
+const LAYOUT_STORAGE_KEY = 'marjapussi.ui.layout.v1';
+const LAYOUT_DEFAULTS = { side: 260, col3: 220 };
+const LAYOUT_LIMITS = {
+  boardMin: 420,
+  sideMin: 180,
+  sideMax: 560,
+  col3Min: 160,
+  col3Max: 520,
+};
+
+function clamp(v, lo, hi) {
+  if (hi < lo) return lo;
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function readLayoutWidths() {
+  const cs = getComputedStyle(document.documentElement);
+  const side = Number.parseFloat(cs.getPropertyValue('--side-w')) || LAYOUT_DEFAULTS.side;
+  const col3 = Number.parseFloat(cs.getPropertyValue('--col3-w')) || LAYOUT_DEFAULTS.col3;
+  return { side, col3 };
+}
+
+function writeLayoutWidths(side, col3, persist = true) {
+  const rootStyle = document.documentElement.style;
+  if (Number.isFinite(side)) rootStyle.setProperty('--side-w', `${Math.round(side)}px`);
+  if (Number.isFinite(col3)) rootStyle.setProperty('--col3-w', `${Math.round(col3)}px`);
+  if (persist) {
+    try { localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({ side, col3 })); } catch (_) { }
+  }
+}
+
+function clampLayoutForViewport(side, col3) {
+  const main = document.getElementById('main');
+  const col3El = document.getElementById('col3');
+  if (!main || !col3El) return { side, col3 };
+
+  const total = main.clientWidth || 0;
+  const col3Visible = getComputedStyle(col3El).display !== 'none';
+  if (window.innerWidth <= 1120) return { side, col3 };
+
+  if (!col3Visible) {
+    const sideMax = Math.max(LAYOUT_LIMITS.sideMin, total - LAYOUT_LIMITS.boardMin);
+    return {
+      side: clamp(side, LAYOUT_LIMITS.sideMin, Math.min(sideMax, LAYOUT_LIMITS.sideMax)),
+      col3,
+    };
+  }
+
+  const available = Math.max(0, total - LAYOUT_LIMITS.boardMin);
+  const sideMax = Math.max(LAYOUT_LIMITS.sideMin, Math.min(LAYOUT_LIMITS.sideMax, available - LAYOUT_LIMITS.col3Min));
+  const nextSide = clamp(side, LAYOUT_LIMITS.sideMin, sideMax);
+  const col3Max = Math.max(LAYOUT_LIMITS.col3Min, Math.min(LAYOUT_LIMITS.col3Max, available - nextSide));
+  const nextCol3 = clamp(col3, LAYOUT_LIMITS.col3Min, col3Max);
+  return { side: nextSide, col3: nextCol3 };
+}
+
+function initColumnResizers() {
+  const main = document.getElementById('main');
+  const handleMain = document.getElementById('handle-main');
+  const handleSide = document.getElementById('handle-side');
+  const col3El = document.getElementById('col3');
+  if (!main || !handleMain || !handleSide || !col3El) return;
+
+  try {
+    const raw = localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Number.isFinite(parsed?.side) && Number.isFinite(parsed?.col3)) {
+        const clamped = clampLayoutForViewport(parsed.side, parsed.col3);
+        writeLayoutWidths(clamped.side, clamped.col3, false);
+      }
+    }
+  } catch (_) { }
+
+  const applyViewportClamp = () => {
+    const w = readLayoutWidths();
+    const clamped = clampLayoutForViewport(w.side, w.col3);
+    writeLayoutWidths(clamped.side, clamped.col3, false);
+  };
+  applyViewportClamp();
+  window.addEventListener('resize', applyViewportClamp);
+
+  let dragKind = null; // 'main' | 'side'
+
+  const onMove = ev => {
+    if (!dragKind) return;
+    if (window.innerWidth <= 1120) return;
+    const rect = main.getBoundingClientRect();
+    const x = ev.clientX - rect.left;
+    const total = rect.width;
+    const col3Visible = getComputedStyle(col3El).display !== 'none';
+    const w = readLayoutWidths();
+
+    if (dragKind === 'main') {
+      if (!col3Visible) {
+        const rawSide = total - x;
+        const sideMax = Math.max(LAYOUT_LIMITS.sideMin, total - LAYOUT_LIMITS.boardMin);
+        writeLayoutWidths(clamp(rawSide, LAYOUT_LIMITS.sideMin, Math.min(sideMax, LAYOUT_LIMITS.sideMax)), w.col3, false);
+        return;
+      }
+      const rawSide = total - x - w.col3;
+      const available = Math.max(0, total - LAYOUT_LIMITS.boardMin);
+      const sideMax = Math.max(LAYOUT_LIMITS.sideMin, Math.min(LAYOUT_LIMITS.sideMax, available - LAYOUT_LIMITS.col3Min));
+      writeLayoutWidths(clamp(rawSide, LAYOUT_LIMITS.sideMin, sideMax), w.col3, false);
+      return;
+    }
+
+    if (dragKind === 'side' && col3Visible) {
+      const rawCol3 = total - x;
+      const available = Math.max(0, total - LAYOUT_LIMITS.boardMin);
+      const col3Max = Math.max(LAYOUT_LIMITS.col3Min, Math.min(LAYOUT_LIMITS.col3Max, available - w.side));
+      writeLayoutWidths(w.side, clamp(rawCol3, LAYOUT_LIMITS.col3Min, col3Max), false);
+    }
+  };
+
+  const stopDrag = () => {
+    if (!dragKind) return;
+    dragKind = null;
+    document.body.classList.remove('col-resizing');
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', stopDrag);
+    window.removeEventListener('pointercancel', stopDrag);
+    const w = readLayoutWidths();
+    const clamped = clampLayoutForViewport(w.side, w.col3);
+    writeLayoutWidths(clamped.side, clamped.col3);
+  };
+
+  const startDrag = kind => ev => {
+    if (ev.button !== 0) return;
+    dragKind = kind;
+    document.body.classList.add('col-resizing');
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', stopDrag);
+    window.addEventListener('pointercancel', stopDrag);
+    ev.preventDefault();
+  };
+
+  handleMain.addEventListener('pointerdown', startDrag('main'));
+  handleSide.addEventListener('pointerdown', startDrag('side'));
 }
 
 // â”€â”€ 6. Main render orchestrator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1280,8 +1429,41 @@ function mk(tag, cls = '', text = '') {
 document.getElementById('dbg').addEventListener('change', ev => {
   debugMode = ev.target.checked;
   document.getElementById('dbg-panel').style.display = debugMode ? '' : 'none';
+  persistUiPrefs();
   if (gs) { send({ cmd: 'debug_state' }); render(); }
 });
+
+function persistUiPrefs() {
+  try {
+    localStorage.setItem(UI_PREFS_KEY, JSON.stringify({
+      debug_mode: debugMode,
+      follow_active: followActiveSeat,
+      manual_view_seat: preferredManualViewSeat,
+    }));
+  } catch (_) { }
+}
+
+function loadUiPrefs() {
+  try {
+    const raw = localStorage.getItem(UI_PREFS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      debugMode = parsed?.debug_mode === true;
+      followActiveSeat = parsed?.follow_active !== false;
+      preferredManualViewSeat = normalizeSeat(parsed?.manual_view_seat ?? 0);
+      if (!followActiveSeat) viewSeat = preferredManualViewSeat;
+    }
+  } catch (_) { }
+
+  const dbg = document.getElementById('dbg');
+  if (dbg) dbg.checked = debugMode;
+  const dbgPanel = document.getElementById('dbg-panel');
+  if (dbgPanel) dbgPanel.style.display = debugMode ? '' : 'none';
+  const viewSel = document.getElementById('view-seat');
+  if (viewSel) {
+    viewSel.value = followActiveSeat ? 'active' : String(preferredManualViewSeat);
+  }
+}
 
 function clearLocalState() {
   lastTokenLen = 0;
@@ -1343,8 +1525,10 @@ document.getElementById('view-seat')?.addEventListener('change', ev => {
     if (active >= 0) requestViewSeat(active);
   } else {
     followActiveSeat = false;
-    requestViewSeat(normalizeSeat(value));
+    preferredManualViewSeat = normalizeSeat(value);
+    requestViewSeat(preferredManualViewSeat);
   }
+  persistUiPrefs();
   render();
 });
 
@@ -1363,4 +1547,6 @@ function tick() {
 }
 
 // Connect â€” do NOT auto-start a new game. The server re-sends state on connect.
+loadUiPrefs();
+initColumnResizers();
 connect();

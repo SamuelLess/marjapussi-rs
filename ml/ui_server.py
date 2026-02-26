@@ -80,6 +80,14 @@ def rel_hidden_abs_seat(pov_abs_seat: int, rel_hidden_idx: int) -> int:
     return (pov_abs_seat + rel_hidden_idx + 1) % 4
 
 
+def rank_possible_cards(row: list[float], possible_row: list[bool], want: int) -> list[int]:
+    """Rank cards by probability, constrained to currently possible cards."""
+    want = max(0, want)
+    candidates = [i for i in range(36) if bool(possible_row[i])]
+    ranked = sorted(candidates, key=lambda i: row[i], reverse=True)
+    return ranked[:want]
+
+
 @dataclass
 class SeatController:
     mode: str
@@ -396,7 +404,7 @@ class GameManager:
             row = probs[rel]
             want = int(cards_remaining[rel + 1]) if rel + 1 < len(cards_remaining) else 0
             want = max(0, min(9, want))
-            ranked = sorted(range(36), key=lambda i: row[i], reverse=True)[:want]
+            ranked = rank_possible_cards(row, possible[rel], want)
             abs_seat = rel_hidden_abs_seat(seat, rel)
             truth = set(all_hands[abs_seat]) if abs_seat < len(all_hands) else set()
 
@@ -710,8 +718,8 @@ class GameManager:
                     want = int(cards_remaining[rel_opp + 1]) if (rel_opp + 1) < len(cards_remaining) else 0
                     want = max(0, min(9, want))
                     row = probs[rel_opp]
-                    ranked = sorted(range(36), key=lambda i: row[i], reverse=True)
-                    predicted_hands[str(rel_opp + 1)] = ranked[:want]
+                    ranked = rank_possible_cards(row, possible[rel_opp], want)
+                    predicted_hands[str(rel_opp + 1)] = ranked
 
                     imp_vals = [row[i] for i in range(36) if not bool(possible[rel_opp][i])]
                     impossible_mass[str(rel_opp + 1)] = (sum(imp_vals) / len(imp_vals)) if imp_vals else 0.0
