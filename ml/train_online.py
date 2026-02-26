@@ -103,7 +103,7 @@ def _is_bidding_action(legal: list[dict]) -> bool:
 
 
 def _is_passing_action(legal: list[dict]) -> bool:
-    return bool(legal and legal[0].get("action_token") == 43)
+    return bool(legal and legal[0].get("action_token") in (43, 52))
 
 
 def run_episode(

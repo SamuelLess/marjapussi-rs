@@ -1,5 +1,5 @@
-/**
- * Marjapussi UI — app.js
+﻿/**
+ * Marjapussi UI â€” app.js
  *
  * Modules (in this file, clearly separated by section headers):
  *   1. Constants & state
@@ -20,13 +20,13 @@
 
 'use strict';
 
-// ── 1. Constants & state ──────────────────────────────────────────────────────
+// â”€â”€ 1. Constants & state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-const SL = ['Grün', 'Eichel', 'Schellen', 'Herz'];
+const SL = ['GrÃ¼n', 'Eichel', 'Schellen', 'Herz'];
 const SCOL = ['#15803d', '#78350f', '#b45309', '#dc2626'];
 const VL = ['6', '7', '8', '9', 'U', 'O', 'K', '10', 'A'];
 const PNAMES = ['Du (P0)', 'P1 Links', 'P2 Partner', 'P3 Rechts'];
-// SVG suit files — served via /ui static route
+// SVG suit files â€” served via /ui static route
 const SUIT_IMGS = ['/ui/suits/gruen.svg', '/ui/suits/eichel.svg', '/ui/suits/schell.svg', '/ui/suits/rot.svg'];
 
 const PORT = location.port || 8765;
@@ -59,7 +59,7 @@ let lastTokenLen = 0;                // last decoded event_tokens length
 let selectedPassCards = new Set();
 let bidStepValue = 120;
 
-// ── 2. WebSocket / connection ─────────────────────────────────────────────────
+// â”€â”€ 2. WebSocket / connection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function connect() {
   ws = new WebSocket(`ws://${location.hostname}:${PORT}/ws`);
@@ -90,7 +90,7 @@ function connect() {
         render(); // update table face-up cards
         break;
       case 'error':
-        evLog('❌', m.message, 'err-ev');
+        evLog('âŒ', m.message, 'err-ev');
         break;
     }
   };
@@ -102,7 +102,7 @@ function setDot(s) {
   document.getElementById('dot').className = 'dot ' + (['', 'ok', 'err'][s] || '');
 }
 
-// ── 3. Card DOM helpers ────────────────────────────────────────────────────────
+// â”€â”€ 3. Card DOM helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Create an <img> element for a suit symbol. Always created via DOM (not innerHTML). */
 function mkSuitImg(suitIdx, sizePx) {
@@ -163,7 +163,7 @@ function mkFD() {
   return e;
 }
 
-// ── 4. Trump display ──────────────────────────────────────────────────────────
+// â”€â”€ 4. Trump display â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 let _lastTrump = undefined;
 function setTrump(ti) {
@@ -174,17 +174,17 @@ function setTrump(ti) {
   if (ti != null) {
     sym.appendChild(mkSuitImg(ti, 30));
   } else {
-    sym.textContent = '—';
+    sym.textContent = 'â€”';
   }
   document.getElementById('trump-lbl').textContent = ti != null ? SL[ti] : 'Kein Trumpf';
 }
 
-// ── 5. Active player logic ────────────────────────────────────────────────────
+// â”€â”€ 5. Active player logic â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Returns the seat (0-3) that should act next, or -1 if unknown.
  * Server always sends obs from P0's POV.
- * If legal_actions is non-empty → it is P0's turn (server only sends actions for the acting player).
+ * If legal_actions is non-empty â†’ it is P0's turn (server only sends actions for the acting player).
  * During a trick: next = (leader + cards_played) % 4.
  */
 function getActiveSeat(obs) {
@@ -192,7 +192,7 @@ function getActiveSeat(obs) {
   return obs.active_player ?? -1;
 }
 
-// ── 6. Main render orchestrator ───────────────────────────────────────────────
+// â”€â”€ 6. Main render orchestrator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function render() {
   if (!gs) return;
@@ -246,7 +246,7 @@ function render() {
   }
 }
 
-// ── 7. Hand renderer (selective animation) ─────────────────────────────────────
+// â”€â”€ 7. Hand renderer (selective animation) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function renderHand(s, obs) {
   const el = document.getElementById('h' + s);
@@ -257,8 +257,17 @@ function renderHand(s, obs) {
   const isHuman = hs.size === 0 ? s === 0 : hs.has(s);
   const canAct = isMyTurn && (isHuman || debugMode);
   const isPassing = (obs.phase === "PassingForth" || obs.phase === "PassingBack");
+  const hasSequentialPass = isPassing && (obs.legal_actions || []).some(
+    la => la.action_token === 52 && la.card_idx != null
+  );
 
-  if (!isPassing && s === 0) selectedPassCards.clear();
+  if (s === 0) {
+    if (isPassing) {
+      if (hasSequentialPass) selectedPassCards = new Set(obs.pass_selection_indices || []);
+    } else {
+      selectedPassCards.clear();
+    }
+  }
 
   // Legal actions mapping (only relevant for the active player)
   const lm = new Map();
@@ -295,7 +304,9 @@ function renderHand(s, obs) {
 
       sortedHand.forEach(i => {
         const ai = lm.get(i);
-        const legalPlay = canAct && (ai !== undefined || isPassing);
+        const legalPlay = canAct && (
+          ai !== undefined || (isPassing && (hasSequentialPass ? selectedPassCards.has(i) : true))
+        );
         let cls = legalPlay ? 'legal' : '';
 
         if (s > 0 && debugMode) {
@@ -310,16 +321,27 @@ function renderHand(s, obs) {
           // Re-evaluate current state dynamically (since DOM nodes persist)
           const currAi = lm.get(i);
           const currPassing = (gs?.obs?.phase === "PassingForth" || gs?.obs?.phase === "PassingBack");
-          const legalNow = canAct && (currAi !== undefined || currPassing);
+          const currSeqPass = currPassing && (gs?.obs?.legal_actions || []).some(
+            la => la.action_token === 52 && la.card_idx != null
+          );
+          const legalNow = canAct && (
+            currAi !== undefined || (currPassing && (currSeqPass ? selectedPassCards.has(i) : true))
+          );
           if (!legalNow) return; // ignore clicks if currently not legal
 
           if (currPassing) {
-            if (selectedPassCards.has(i)) selectedPassCards.delete(i);
-            else if (selectedPassCards.size < 4) selectedPassCards.add(i);
-            render(); // Redraw selection visuals + bid area
+            if (currSeqPass) {
+              if (currAi !== undefined) {
+                send({ cmd: 'human_action', action_list_idx: currAi });
+              }
+            } else {
+              if (selectedPassCards.has(i)) selectedPassCards.delete(i);
+              else if (selectedPassCards.size < 4) selectedPassCards.add(i);
+              render();
+            }
           } else if (currAi !== undefined) {
             send({ cmd: 'human_action', action_list_idx: currAi });
-            evLog('🫵', `P${s} spielt: <b>${VL[i % 9]} ${SL[(i / 9) | 0]}</b>`);
+            evLog('ðŸ«µ', `P${s} spielt: <b>${VL[i % 9]} ${SL[(i / 9) | 0]}</b>`);
           }
         });
 
@@ -336,7 +358,9 @@ function renderHand(s, obs) {
       el.querySelectorAll('.card').forEach(card => {
         const ci = +card.dataset.ci;
         const ai = lm.get(ci);
-        const legalPlay = canAct && (ai !== undefined || isPassing);
+        const legalPlay = canAct && (
+          ai !== undefined || (isPassing && (hasSequentialPass ? selectedPassCards.has(ci) : true))
+        );
 
         card.classList.toggle('legal', legalPlay);
         if (isPassing) card.classList.toggle('selected', selectedPassCards.has(ci));
@@ -353,7 +377,7 @@ function renderHand(s, obs) {
     }
 
   } else {
-    // ── Face-down cards ──
+    // â€”â€” Face-down cards â€”â€”
     const n = obs.cards_remaining?.[s] ?? 0;
     if (el.children.length !== n || el.querySelector('.card:not(.fd)')) {
       el.innerHTML = '';
@@ -363,7 +387,7 @@ function renderHand(s, obs) {
   }
 }
 
-// ── 8. Trick renderer (animate only newest card) ───────────────────────────────
+// â€”â€” 8. Trick renderer (animate only newest card) â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 
 function renderTrick(obs) {
   let trickIdxs = obs.current_trick_indices || [];
@@ -416,7 +440,7 @@ function renderTrick(obs) {
   trickIdxs.forEach((ci, i) => {
     const isNew = !isLingering && !prevSet.has(ci);
     const card = mkCard(ci, 'trick' + (isLingering ? ' lingering' : ''), isNew);
-    if (!isLingering) card.title += ' → ' + PNAMES[trickPlayers[i] ?? i];
+    if (!isLingering) card.title += ' â†’ ' + PNAMES[trickPlayers[i] ?? i];
     tc.appendChild(card);
   });
   prevTrickKey = newKey;
@@ -425,11 +449,10 @@ function renderTrick(obs) {
   if (isLingering) {
     tinfo.textContent = `Stich ${obs.trick_number - 1} abgeschlossen`;
   } else {
-    tinfo.textContent = `Stich ${obs.trick_number ?? 1} · ${trickIdxs.length}/4 Karten`;
+    tinfo.textContent = `Stich ${obs.trick_number ?? 1} Â· ${trickIdxs.length}/4 Karten`;
   }
 }
-
-// ── 9. Bid area / stepper ──────────────────────────────────────────────────────
+// â”€â”€ 9. Bid area / stepper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function renderBidArea(obs, active) {
   const ba = document.getElementById('bid-area');
@@ -448,59 +471,46 @@ function renderBidArea(obs, active) {
 
   const legal = obs.legal_actions || [];
 
-  // ── Passing Cards (Gib ab) ──
+  // Passing Cards (Gib ab)
   const isPassing = (obs.phase === "PassingForth" || obs.phase === "PassingBack");
   if (canAct && isPassing) {
     ba.dataset.ahash = ''; // force re-render on selection changes
     ba.innerHTML = '';
-    const btn = document.createElement('button');
-    btn.className = 'bid-btn act';
-    if (selectedPassCards.size === 4) {
-      btn.textContent = `Schieben (4/4)`;
-      // Verify cards match a legal action if human, OR just use debug pass if debugging
-      const selArr = [...selectedPassCards].sort((a, b) => a - b);
-      let isValidHuman = false;
-      let matchedActionIdx = null;
-
-      const passActions = legal.filter(la => la.action_token === 43);
-      const match = passActions.find(la => {
-        if (!la.pass_cards || la.pass_cards.length !== 4) return false;
-        const pc = [...la.pass_cards].sort((a, b) => a - b);
-        return pc.every((c, i) => c === selArr[i]);
-      });
-
-      if (match) {
-        isValidHuman = true;
-        matchedActionIdx = match.action_list_idx;
+    const hasSequentialPass = legal.some(la => la.action_token === 52 && la.card_idx != null);
+    if (hasSequentialPass) {
+      const selected = obs.pass_selection_indices || [];
+      const target = obs.pass_selection_target || 4;
+      const txt = document.createElement('div');
+      txt.className = 'bid-btn act';
+      txt.style.opacity = '1';
+      txt.style.cursor = 'default';
+      if (selected.length < target) {
+        txt.textContent = `Wähle Karten (${selected.length}/${target})`;
+      } else {
+        txt.textContent = `Schieben...`;
       }
-
-      if (isValidHuman) {
-        btn.onclick = () => {
-          send({ cmd: 'human_action', action_list_idx: matchedActionIdx });
-          selectedPassCards.clear();
-        };
-      } else if (debugMode || isHuman) {
-        // Allow forcing arbitrary passes (server will validate) as a robust failsafe 
-        // if legal_actions are ever missing or malformed for the human player.
+      ba.appendChild(txt);
+    } else {
+      const btn = document.createElement('button');
+      btn.className = 'bid-btn act';
+      if (selectedPassCards.size === 4) {
+        btn.textContent = `Schieben (4/4)`;
+        const selArr = [...selectedPassCards].sort((a, b) => a - b);
         btn.onclick = () => {
           send({ cmd: 'debug_pass', card_indices: selArr });
           selectedPassCards.clear();
         };
       } else {
+        btn.textContent = `Wähle 4 Karten (${selectedPassCards.size}/4)`;
         btn.disabled = true;
         btn.style.opacity = '0.5';
-        btn.title = 'Diese Kombination ist ungültig.';
       }
-    } else {
-      btn.textContent = `Wähle 4 Karten (${selectedPassCards.size}/4)`;
-      btn.disabled = true;
-      btn.style.opacity = '0.5';
+      ba.appendChild(btn);
     }
-    ba.appendChild(btn);
     return;
   }
 
-  // ── Standard non-card actions ──
+  // Standard non-card actions
   const nonCard = legal.filter(la => la.card_idx == null && la.pass_cards == null);
   if (!canAct || !nonCard.length) { ba.innerHTML = ''; return; }
 
@@ -513,7 +523,7 @@ function renderBidArea(obs, active) {
   const bidActions = nonCard.filter(la => la.action_token === 41);
   const otherActions = nonCard.filter(la => la.action_token !== 41 && la.action_token !== 43);
 
-  // ── Bid stepper ──
+  // â”€â”€ Bid stepper â”€â”€
   if (bidActions.length > 0) {
     const bidVals = bidActions.map(la => la.bid_value).filter(v => v != null).sort((a, b) => a - b);
     const minB = bidVals[0], maxB = bidVals[bidVals.length - 1];
@@ -553,8 +563,8 @@ function renderBidArea(obs, active) {
     };
 
     const step50 = Math.max(1, bidVals.findIndex(v => v >= bidVals[0] + 50));
-    row.appendChild(mkStep('−50', -step50));
-    row.appendChild(mkStep('−5', -1));
+    row.appendChild(mkStep('âˆ’50', -step50));
+    row.appendChild(mkStep('âˆ’5', -1));
     row.appendChild(valDisp);
     row.appendChild(mkStep('+5', +1));
     row.appendChild(mkStep('+50', +step50));
@@ -564,13 +574,13 @@ function renderBidArea(obs, active) {
       const la = bidActions.find(a => a.bid_value === bidStepValue);
       if (la) {
         send({ cmd: 'human_action', action_list_idx: la.action_list_idx });
-        evLog('💰', `Du bietest: <b>${bidStepValue}</b>`, 'bid-ev');
+        evLog('ðŸ’°', `Du bietest: <b>${bidStepValue}</b>`, 'bid-ev');
       }
     });
     ba.appendChild(row);
   }
 
-  // ── Other non-bid actions (Passe, Trumpf, Paar?, etc.) ──
+  // â”€â”€ Other non-bid actions (Passe, Trumpf, Paar?, etc.) â”€â”€
   otherActions.forEach(la => {
     const btn = document.createElement('button');
     let label = '', cls = 'bid-btn';
@@ -579,36 +589,36 @@ function renderBidArea(obs, active) {
       case 42: label = 'Passe'; cls += ' pass'; break;
       case 43: label = 'Gib ab'; cls += ' pass'; break;
       case 44:
-        label = '🏆 Trumpf' + (la.suit_idx != null ? `: ${SL[la.suit_idx]}` : '');
+        label = 'ðŸ† Trumpf' + (la.suit_idx != null ? `: ${SL[la.suit_idx]}` : '');
         cls += ' act'; break;
       case 45: label = 'Paar?'; cls += ' act'; break;
       case 46:
         label = 'Halb?' + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
         cls += ' act'; break;
       case 47:
-        label = '✅ Ja (Paar)' + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
+        label = 'âœ… Ja (Paar)' + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
         cls += ' act'; break;
       case 48:
-        label = '❌ Nein (Paar)' + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
+        label = 'âŒ Nein (Paar)' + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
         cls += ' pass'; break;
       case 49:
-        label = '✅ Ja (Halb)' + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
+        label = 'âœ… Ja (Halb)' + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
         cls += ' act'; break;
       case 50:
-        label = '❌ Nein (Halb)' + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
+        label = 'âŒ Nein (Halb)' + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
         cls += ' pass'; break;
       default: label = `Aktion ${la.action_token}`;
     }
     btn.className = cls; btn.textContent = label;
     btn.addEventListener('click', () => {
       send({ cmd: 'human_action', action_list_idx: la.action_list_idx });
-      evLog('🫵', `Du: <b>${label}</b>`, 'bid-ev');
+      evLog('ðŸ«µ', `Du: <b>${label}</b>`, 'bid-ev');
     });
     ba.appendChild(btn);
   });
 }
 
-// ── 10. Last-trick strip ───────────────────────────────────────────────────────
+// â”€â”€ 10. Last-trick strip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function showLastTrick(cards, winner, pts) {
   const row = document.getElementById('last-trick-row');
@@ -619,7 +629,7 @@ function showLastTrick(cards, winner, pts) {
   row.dataset.key = key;
   row.style.display = '';
   document.getElementById('lt-label').textContent =
-    `Letzter Stich · ${PNAMES[winner] ?? 'P' + winner} gewinnt (${pts} Pkt.)`;
+    `Letzter Stich Â· ${PNAMES[winner] ?? 'P' + winner} gewinnt (${pts} Pkt.)`;
   ltc.innerHTML = '';
   cards.forEach(cardStr => {
     const idx = parseCardStr(cardStr);
@@ -633,11 +643,11 @@ function showLastTrick(cards, winner, pts) {
   });
 }
 
-/** Parse Rust Display format: "6 Grün", "A Herz", etc. */
+/** Parse Rust Display format: "6 GrÃ¼n", "A Herz", etc. */
 function parseCardStr(s) {
   const VMAP = { '6': 0, '7': 1, '8': 2, '9': 3, 'U': 4, 'O': 5, 'K': 6, '10': 7, 'A': 8 };
   const SMAP = {
-    'Grün': 0, 'Eichel': 1, 'Schellen': 2, 'Herz': 3,
+    'GrÃ¼n': 0, 'Eichel': 1, 'Schellen': 2, 'Herz': 3,
     'Green': 0, 'Acorns': 1, 'Bells': 2, 'Red': 3
   };
   const p = s.trim().split(/\s+/);
@@ -646,7 +656,7 @@ function parseCardStr(s) {
   return (vi == null || si == null) ? -1 : si * 9 + vi;
 }
 
-// ── 11. Event log decoder ──────────────────────────────────────────────────────
+// â”€â”€ 11. Event log decoder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Decode event_tokens into human-readable log entries.
  *  Token constants match observation.rs:
@@ -688,7 +698,7 @@ function renderEventLog(obs) {
   const isSu = t => t >= 60 && t <= 63;
   const isCa = t => t >= 70 && t <= 105;
   const isBV = t => t >= 120;
-  const ROLES = { 30: 'VH', 31: 'MH', 32: 'LH', 33: 'RH', 34: '—' };
+  const ROLES = { 30: 'VH', 31: 'MH', 32: 'LH', 33: 'RH', 34: 'â€”' };
 
   const pn = t => `P${t - 20}`;
   const sn = t => SL[t - 60] ?? '?';
@@ -703,10 +713,10 @@ function renderEventLog(obs) {
     if (t === 1) {
       // START_GAME followed by role
       const r = i < tokens.length ? eat() : 0;
-      raw.push({ ico: '🎴', txt: `Spiel · Rolle: <b>${ROLES[r] ?? '?'}</b>`, cls: '' });
+      raw.push({ ico: 'ðŸŽ´', txt: `Spiel Â· Rolle: <b>${ROLES[r] ?? '?'}</b>`, cls: '' });
 
     } else if (t >= 10 && t < 19) {
-      raw.push({ ico: '📋', txt: `<b>── Stich ${t - 9} ──</b>`, cls: '' });
+      raw.push({ ico: 'ðŸ“‹', txt: `<b>â”€â”€ Stich ${t - 9} â”€â”€</b>`, cls: '' });
 
     } else if (isP(t)) {
       if (i >= tokens.length) break;
@@ -715,51 +725,51 @@ function renderEventLog(obs) {
 
       if (act === 40) {
         let c = '?'; if (i < tokens.length && isCa(peek())) c = cn(eat());
-        raw.push({ ico: '🃏', txt: `<b>${who}</b>: spielt <b>${c}</b>`, cls: '' });
+        raw.push({ ico: 'ðŸƒ', txt: `<b>${who}</b>: spielt <b>${c}</b>`, cls: '' });
 
       } else if (act === 41) {
         let v = ''; if (i < tokens.length && isBV(peek())) v = bv(eat());
-        raw.push({ ico: '💰', txt: `<b>${who}</b>: Biete <b>${v}</b>`, cls: 'bid-ev' });
+        raw.push({ ico: 'ðŸ’°', txt: `<b>${who}</b>: Biete <b>${v}</b>`, cls: 'bid-ev' });
 
       } else if (act === 42) {
-        raw.push({ ico: '⛔', txt: `<b>${who}</b>: Passe`, cls: '' });
+        raw.push({ ico: 'â›”', txt: `<b>${who}</b>: Passe`, cls: '' });
 
       } else if (act === 43) {
-        raw.push({ ico: '🤝', txt: `<b>${who}</b>: Gibt Karten`, cls: '' });
+        raw.push({ ico: 'ðŸ¤', txt: `<b>${who}</b>: Gibt Karten`, cls: '' });
         while (i < tokens.length && (isCa(peek()) || peek() === 110)) eat();
 
       } else if (act === 44) {
         const su = sfx();
-        raw.push({ ico: '🏆', txt: `<b>${who}</b>: Trumpf<b>${su}</b>`, cls: 'trump-ev' });
+        raw.push({ ico: 'ðŸ†', txt: `<b>${who}</b>: Trumpf<b>${su}</b>`, cls: 'trump-ev' });
 
       } else if (act === 45) {
-        raw.push({ ico: '❓', txt: `<b>${who}</b>: Paar?`, cls: '' });
+        raw.push({ ico: 'â“', txt: `<b>${who}</b>: Paar?`, cls: '' });
 
       } else if (act === 46) {
         const su = sfx();
-        raw.push({ ico: '❓', txt: `<b>${who}</b>: Halb?<b>${su}</b>`, cls: '' });
+        raw.push({ ico: 'â“', txt: `<b>${who}</b>: Halb?<b>${su}</b>`, cls: '' });
 
       } else if (act === 47) {
         const su = sfx();
-        raw.push({ ico: '✅', txt: `<b>${who}</b>: Ja, Paar<b>${su}</b>`, cls: 'trump-ev' });
+        raw.push({ ico: 'âœ…', txt: `<b>${who}</b>: Ja, Paar<b>${su}</b>`, cls: 'trump-ev' });
 
       } else if (act === 48) {
-        raw.push({ ico: '❌', txt: `<b>${who}</b>: Nein (kein Paar)`, cls: '' });
+        raw.push({ ico: 'âŒ', txt: `<b>${who}</b>: Nein (kein Paar)`, cls: '' });
 
       } else if (act === 49) {
         const su = sfx();
-        raw.push({ ico: '✅', txt: `<b>${who}</b>: Ja, Halb<b>${su}</b>`, cls: 'trump-ev' });
+        raw.push({ ico: 'âœ…', txt: `<b>${who}</b>: Ja, Halb<b>${su}</b>`, cls: 'trump-ev' });
 
       } else if (act === 50) {
         const su = sfx();
-        raw.push({ ico: '❌', txt: `<b>${who}</b>: Nein (kein Halb${su})`, cls: '' });
+        raw.push({ ico: 'âŒ', txt: `<b>${who}</b>: Nein (kein Halb${su})`, cls: '' });
       }
 
     } else if (t === 51) {
       // Trick won
       if (i < tokens.length && isP(peek())) {
         const w = eat();
-        raw.push({ ico: '🏅', txt: `<b>${pn(w)}</b> gewinnt den Stich`, cls: 'trick-win' });
+        raw.push({ ico: 'ðŸ…', txt: `<b>${pn(w)}</b> gewinnt den Stich`, cls: 'trick-win' });
       }
     }
     // unknown tokens: skip silently
@@ -784,7 +794,7 @@ function evLog(ico, txt, cls = '') {
   el.prepend(div);
 }
 
-// ── 12. AI sidebar ─────────────────────────────────────────────────────────────
+// â”€â”€ 12. AI sidebar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function renderAI(obs) {
   const ct = document.getElementById('ai');
@@ -803,7 +813,7 @@ function renderAI(obs) {
     d.className = 'ais';
     d.innerHTML =
       `<div class="aih">` +
-      `<div class="ain">${names[s]}${isH ? ' 👤' : ''}</div>` +
+      `<div class="ain">${names[s]}${isH ? ' ðŸ‘¤' : ''}</div>` +
       `<div style="display:flex;align-items:center;gap:4px">` +
       `<span style="font-size:10px;color:var(--dim)">H</span>` +
       `<div class="hb"><div class="hf ${ec}" style="width:${ep.toFixed(0)}%"></div></div>` +
@@ -811,10 +821,10 @@ function renderAI(obs) {
       `</div>` +
       `<div class="prows"></div>` +
       (s > 0
-        ? `<button class="tob${isH ? ' on' : ''}" data-s="${s}">${isH ? '✓ Du' : 'Übernehmen'}</button>`
+        ? `<button class="tob${isH ? ' on' : ''}" data-s="${s}">${isH ? 'âœ“ Du' : 'Ãœbernehmen'}</button>`
         : '');
 
-    // Top-4 action probabilities — with full label from server
+    // Top-4 action probabilities â€” with full label from server
     const topProbs = [...probs].sort((a, b) => b.prob - a.prob).slice(0, 4);
     const maxP = topProbs[0]?.prob ?? 1;
     const pr = d.querySelector('.prows');
@@ -841,12 +851,12 @@ function renderAI(obs) {
   // Sync takeover buttons (may be in the board too)
   document.querySelectorAll('.tob[data-s]').forEach(b => {
     const st = +b.dataset.s;
-    b.textContent = hs.has(st) ? '✓ Du' : 'Übernehmen';
+    b.textContent = hs.has(st) ? 'âœ“ Du' : 'Ãœbernehmen';
     b.className = 'tob' + (hs.has(st) ? ' on' : '');
   });
 }
 
-// ── 13. Debug panel ────────────────────────────────────────────────────────────
+// â”€â”€ 13. Debug panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Shows: all player hands (face-up) with belief overlays, completed tricks.
 
 function renderDebugPanel(obs) {
@@ -857,8 +867,8 @@ function renderDebugPanel(obs) {
 
   const names = ['Du (P0)', 'P1 Links', 'P2 Partner', 'P3 Rechts'];
 
-  // ── Section 1: All hands with face-up cards + belief overlay ──
-  const handsTitle = mk('div', 'dbg-section-title', '🃏 Alle Hände');
+  // â”€â”€ Section 1: All hands with face-up cards + belief overlay â”€â”€
+  const handsTitle = mk('div', 'dbg-section-title', 'ðŸƒ Alle HÃ¤nde');
   p.appendChild(handsTitle);
 
   for (let s = 0; s < 4; s++) {
@@ -867,7 +877,7 @@ function renderDebugPanel(obs) {
     const possible = dbgPossible[s > 0 ? s - 1 : 0] || [];
 
     const section = mk('div', 'dbg-seat');
-    const lbl = mk('div', 'dbg-seat-lbl', names[s] + (hand.length ? ` (${hand.length} Karten)` : ' — unbekannt'));
+    const lbl = mk('div', 'dbg-seat-lbl', names[s] + (hand.length ? ` (${hand.length} Karten)` : ' â€” unbekannt'));
     section.appendChild(lbl);
 
     if (hand.length) {
@@ -896,7 +906,7 @@ function renderDebugPanel(obs) {
           `display:inline-flex;flex-direction:column;align-items:center;font-size:8px;` +
           `padding:1px 2px;border-radius:3px;margin:1px;` +
           `background:${ok ? 'rgba(34,197,94,.2)' : pos ? 'rgba(248,181,0,.08)' : 'rgba(248,113,113,.1)'}`;
-        sp.title = `${VL[va]} ${SL[su]}: ${ok ? '✔ Sicher' : pos ? 'Möglich' : '✘ Fehlt'}`;
+        sp.title = `${VL[va]} ${SL[su]}: ${ok ? 'âœ” Sicher' : pos ? 'MÃ¶glich' : 'âœ˜ Fehlt'}`;
         sp.appendChild(mkSuitImg(su, 10));
         const vsp = document.createElement('span');
         vsp.style.color = ok ? '#22c55e' : pos ? '#94a3b8' : '#f87171';
@@ -909,7 +919,7 @@ function renderDebugPanel(obs) {
     p.appendChild(section);
   }
 
-  // ── Section 2: Completed tricks in order ──
+  // â”€â”€ Section 2: Completed tricks in order â”€â”€
   // Hidden-state prediction from the model (relative opponents)
   // Set-theory inference diagnostics from symbolic engine.
   if (Object.keys(dbgInference).length) {
@@ -983,13 +993,13 @@ function renderDebugPanel(obs) {
 
   const tricks = dbgTricks.length ? dbgTricks : (gs?.info?.tricks || []);
   if (tricks.length) {
-    const tTitle = mk('div', 'dbg-section-title', `🏅 Gespielte Stiche (${tricks.length})`);
+    const tTitle = mk('div', 'dbg-section-title', `ðŸ… Gespielte Stiche (${tricks.length})`);
     p.appendChild(tTitle);
 
     tricks.forEach((trick, ti) => {
       const tRow = mk('div', 'dbg-trick-row');
       const tLbl = mk('span', 'dbg-trick-lbl',
-        `#${ti + 1} → ${PNAMES[trick.winner] ?? 'P' + trick.winner} (+${trick.points ?? 0})`);
+        `#${ti + 1} â†’ ${PNAMES[trick.winner] ?? 'P' + trick.winner} (+${trick.points ?? 0})`);
       tRow.appendChild(tLbl);
 
       const cards = trick.cards || [];
@@ -1007,10 +1017,10 @@ function renderDebugPanel(obs) {
     });
   }
 
-  // ── Section 3: AI policy (symbolic reasoning check) ──
+  // â”€â”€ Section 3: AI policy (symbolic reasoning check) â”€â”€
   const ai0 = ainfo[0] || {};
   if (ai0.probs?.length) {
-    const aTitle = mk('div', 'dbg-section-title', `🧠 KI-Policy (P0, Entropie: ${(ai0.entropy ?? 0).toFixed(2)})`);
+    const aTitle = mk('div', 'dbg-section-title', `ðŸ§  KI-Policy (P0, Entropie: ${(ai0.entropy ?? 0).toFixed(2)})`);
     p.appendChild(aTitle);
     const allProbs = [...(ai0.probs || [])].sort((a, b) => b.prob - a.prob);
     const maxP = allProbs[0]?.prob ?? 1;
@@ -1027,7 +1037,7 @@ function renderDebugPanel(obs) {
     });
     p.appendChild(pTable);
   } else if (TORCH_OK === false) {
-    p.appendChild(mk('div', 'dbg-no-model', '⚠ Kein Modell geladen — zufällige Aktionen'));
+    p.appendChild(mk('div', 'dbg-no-model', 'âš  Kein Modell geladen â€” zufÃ¤llige Aktionen'));
   }
 }
 
@@ -1039,7 +1049,7 @@ function mk(tag, cls = '', text = '') {
   return el;
 }
 
-// ── 14. Controls & init ────────────────────────────────────────────────────────
+// â”€â”€ 14. Controls & init â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 document.getElementById('dbg').addEventListener('change', ev => {
   debugMode = ev.target.checked;
@@ -1055,7 +1065,7 @@ document.getElementById('bn').addEventListener('click', () => {
   document.getElementById('last-trick-row').style.display = 'none';
   document.getElementById('bid-area').dataset.ahash = '';
   send({ cmd: 'new_game' });
-  evLog('🎴', 'Neues Spiel gestartet.');
+  evLog('ðŸŽ´', 'Neues Spiel gestartet.');
 });
 
 document.getElementById('bp').addEventListener('click', () => send({ cmd: 'proceed' }));
@@ -1063,7 +1073,7 @@ document.getElementById('bp').addEventListener('click', () => send({ cmd: 'proce
 document.getElementById('ba').addEventListener('click', () => {
   auto = !auto;
   const b = document.getElementById('ba');
-  b.textContent = auto ? '⏸ Pause' : '▶ Auto';
+  b.textContent = auto ? 'â¸ Pause' : 'â–¶ Auto';
   b.className = 'btn ' + (auto ? 'ba' : 'bs');
   if (auto) tick(); else clearTimeout(autoTm);
 });
@@ -1074,5 +1084,5 @@ function tick() {
   autoTm = setTimeout(tick, 800);
 }
 
-// Connect — do NOT auto-start a new game. The server re-sends state on connect.
+// Connect â€” do NOT auto-start a new game. The server re-sends state on connect.
 connect();

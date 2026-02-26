@@ -68,6 +68,7 @@ class GameManager:
             SUITS = ['Grün', 'Eichel', 'Schellen', 'Herz']
             VALS  = ['6', '7', '8', '9', 'U', 'O', 'K', '10', 'A']
             ATOK  = {40:'spielt', 41:'Biete', 42:'Passe', 43:'Gib',
+                     52:'Wähle',
                      44:'Trumpf', 45:'Paar?', 46:'Halb?',
                      47:'Ja-Paar', 48:'Nein-Paar', 49:'Ja-Halb', 50:'Nein-Halb'}
             prob_list = []

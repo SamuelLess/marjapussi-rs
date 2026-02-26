@@ -95,6 +95,10 @@ pub struct Observation {
     pub event_tokens: Vec<u32>,
     /// Legal actions as (action_type_id, card_idx_or_0, suit_idx_or_0).
     pub legal_actions: Vec<LegalActionObs>,
+    /// Internal passing-progress selection (card indices) used by sequential pass picking.
+    pub pass_selection_indices: Vec<usize>,
+    /// Number of cards that must be selected before finalizing a pass action.
+    pub pass_selection_target: usize,
     /// Debug-friendly phase string (for UI/runtime controls).
     pub phase: String,
 }
@@ -146,6 +150,7 @@ pub mod tokens {
     pub const ACT_A_YES_HALF: u32 = 49;
     pub const ACT_A_NO_HALF: u32 = 50;
     pub const ACT_TRICK_WON: u32 = 51;
+    pub const ACT_PASS_PICK_CARD: u32 = 52;
 
     // Suit tokens [60..63]
     pub const SUIT_BASE: u32 = 60; // SUIT_N = 60 + suit_idx
@@ -454,6 +459,8 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
         last_trick_bonus_live: trick_number <= 9,
         event_tokens,
         legal_actions,
+        pass_selection_indices: vec![],
+        pass_selection_target: 4,
         phase: format!("{:?}", state.phase),
     }
 }
@@ -741,7 +748,15 @@ pub struct ObservationJson {
     pub last_trick_bonus_live: bool,
     pub event_tokens: Vec<u32>,
     pub legal_actions: Vec<LegalActionObs>,
+    #[serde(default)]
+    pub pass_selection_indices: Vec<usize>,
+    #[serde(default = "default_pass_selection_target")]
+    pub pass_selection_target: usize,
     pub phase: String,
+}
+
+fn default_pass_selection_target() -> usize {
+    4
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -781,6 +796,8 @@ impl From<&Observation> for ObservationJson {
             last_trick_bonus_live: o.last_trick_bonus_live,
             event_tokens: o.event_tokens.clone(),
             legal_actions: o.legal_actions.clone(),
+            pass_selection_indices: o.pass_selection_indices.clone(),
+            pass_selection_target: o.pass_selection_target,
             phase: o.phase.clone(),
         }
     }

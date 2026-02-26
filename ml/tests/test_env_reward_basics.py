@@ -33,6 +33,19 @@ class EnvRewardBasicsTest(unittest.TestCase):
         self.assertEqual(tuple(phase.shape), (1, 5))
         self.assertEqual(int(phase.argmax(dim=-1).item()), 3)
 
+    def test_pass_pick_action_uses_single_card_features(self):
+        legal = [{
+            "action_token": 52,
+            "card_idx": 17,
+            "pass_cards": None,
+            "suit_idx": None,
+            "bid_value": None,
+        }]
+        feats, _ = encode_legal_actions(legal)
+        self.assertEqual(float(feats[0, 0, 11]), 1.0)
+        self.assertEqual(float(feats[0, 0, 15 + (17 // 9)]), 1.0)
+        self.assertEqual(float(feats[0, 0, 19 + (17 % 9)]), 1.0)
+
     def test_contract_reward_passgame_and_contract_mode(self):
         cfg = RewardConfig()
         passgame_info = {"team_points": [160, 120], "tricks": []}

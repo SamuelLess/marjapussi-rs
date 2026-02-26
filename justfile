@@ -67,6 +67,22 @@ train-65k-human run_name="human_first_65k": setup-ml build-human-dataset
     @echo "Saved self-play final checkpoint: ml/checkpoints/{{run_name}}_selfplay_final.pt"
     @echo "Saved self-play best checkpoint:  ml/checkpoints/{{run_name}}_selfplay_best.pt"
 
+# Small human-first smoke profile (1,024 self-play games total):
+# - quick verification that end-to-end human-pretrain + self-play pipeline works
+# - keeps explicit checkpoint labels for pretrain/final/best comparison
+train-1k-human run_name="human_smoke_1k": setup-ml build-human-dataset
+    @echo "Running small human pretraining warm-start (max_steps=1024) before short RL smoke run..."
+    {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 6 --batch 1024 --workers 4 --device cuda --max-steps 1024
+    cp -f ml/checkpoints/latest.pt ml/checkpoints/{{run_name}}_pretrain_final.pt
+    @echo "Saved pretraining final checkpoint: ml/checkpoints/{{run_name}}_pretrain_final.pt"
+    ML_SERVER_BIN={{ml_server_bin}} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {{python}} ml/train_online.py --rounds 32 --games-per-round 32 --workers 8 --mc-rollouts 2 --device cuda --eval-every 8 --checkpoint ml/checkpoints/{{run_name}}_pretrain_final.pt --ppo-epochs 2 --min-ppo-epochs 1 --max-ppo-epochs 3 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.20 --max-adv-calls-per-episode 2 --named-checkpoint {{run_name}}_selfplay_final.pt
+    cp -f ml/checkpoints/best.pt ml/checkpoints/{{run_name}}_selfplay_best.pt
+    @echo "Saved self-play final checkpoint: ml/checkpoints/{{run_name}}_selfplay_final.pt"
+    @echo "Saved self-play best checkpoint:  ml/checkpoints/{{run_name}}_selfplay_best.pt"
+
+# Alias matching requested naming style.
+just-1k-human: train-1k-human
+
 # 128k-game run profile: 256 games/round, 24 workers (optimized for this machine).
 train-128k: setup-ml
     @echo "Running 128k profile using virtual environment python: {{python}}"

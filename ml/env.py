@@ -347,13 +347,25 @@ def encode_legal_actions(legal: list[dict]) -> tuple[torch.Tensor, torch.Tensor]
     mask = torch.ones((1, A), dtype=torch.bool)  # True = ignored
 
     # Action type one-hot: 15 types
-    ACTION_TOKENS = {40: 0, 41: 1, 42: 2, 43: 3, 44: 4,
-                     45: 5, 46: 6, 47: 7, 48: 8, 49: 9, 50: 10}
+    ACTION_TOKENS = {
+        40: 0,   # play
+        41: 1,   # bid
+        42: 2,   # stop bidding
+        43: 3,   # pass 4 cards (legacy direct pass encoding)
+        44: 4,   # trump
+        45: 5,   # ask pair
+        46: 6,   # ask half
+        47: 7,   # yes pair
+        48: 8,   # no pair
+        49: 9,   # yes half
+        50: 10,  # no half
+        52: 11,  # sequential pass-pick card
+    }
 
     for i, la in enumerate(legal):
         mask[0, i] = False
         tok = la['action_token']
-        type_idx = ACTION_TOKENS.get(tok, 11)
+        type_idx = ACTION_TOKENS.get(tok, 12)
         feats[0, i, type_idx] = 1.0  # action type [0..14]
 
         # Card/summarized action features.
