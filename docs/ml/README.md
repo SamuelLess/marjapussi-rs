@@ -17,6 +17,10 @@ Technical specs in this folder:
 7. `SPEC_PARALLEL_MODEL_ARCHITECTURE_V2.md`
 8. `TEST_AND_VALIDATION_PLAN.md`
 
+Execution plans:
+
+1. `PLAN_V2_IMPLEMENTATION_TASKLIST.md`
+
 Order of implementation should follow:
 
 1. Observation privacy and reward correctness first.
