@@ -22,12 +22,23 @@
 
 // â”€â”€ 1. Constants & state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-const SL = ['GrÃ¼n', 'Eichel', 'Schellen', 'Herz'];
+const SL = ['Gruen', 'Eichel', 'Schellen', 'Herz'];
 const SCOL = ['#15803d', '#78350f', '#b45309', '#dc2626'];
 const VL = ['6', '7', '8', '9', 'U', 'O', 'K', '10', 'A'];
 const PNAMES = ['Du (P0)', 'P1 Links', 'P2 Partner', 'P3 Rechts'];
 // SVG suit files â€” served via /ui static route
 const SUIT_IMGS = ['/ui/suits/gruen.svg', '/ui/suits/eichel.svg', '/ui/suits/schell.svg', '/ui/suits/rot.svg'];
+const GLYPHS = window.UI_GLYPHS || {};
+const EMOJI = GLYPHS.emoji || {};
+const SYMBOLS = GLYPHS.symbols || {};
+
+function em(name, fallback = '') {
+  return EMOJI[name] || fallback;
+}
+
+function sym(name, fallback = '') {
+  return SYMBOLS[name] || fallback;
+}
 
 const PORT = location.port || 8765;
 
@@ -43,6 +54,9 @@ let pendingSeatCheckpoint = {};
 let torchOk = true;
 let auto = false;
 let autoTm = null;
+let viewSeat = 0;
+let pendingViewSeat = null;
+let followActiveSeat = true;
 
 let debugMode = false;
 let allHands = {};  // from debug_state
@@ -54,6 +68,7 @@ let dbgPredCardProbs = [];
 let dbgPredImpossibleMass = {};
 let dbgPredHiddenLoss = null;
 let dbgInference = {};
+const lastKnownHandsBySeat = [[], [], [], []];
 
 // Render-diff state (prevents unnecessary DOM churn)
 const prevHand = ['', '', '', ''];  // per seat: sorted card-idx CSV
@@ -80,6 +95,10 @@ function connect() {
         ainfo = m.ai_info || {};
         controllers = gs?.controllers || {};
         seatViews = gs?.seat_views || {};
+        if (Number.isInteger(gs?.view_seat)) {
+          viewSeat = Math.max(0, Math.min(3, Number(gs.view_seat)));
+          if (pendingViewSeat === viewSeat) pendingViewSeat = null;
+        }
         checkpointOptions = gs?.checkpoints || checkpointOptions;
         torchOk = gs?.torch_ok !== false;
         hs = new Set(gs?.human_seats || []);
@@ -110,7 +129,7 @@ function connect() {
         render(); // update table face-up cards
         break;
       case 'error':
-        evLog('âŒ', m.message, 'err-ev');
+        evLog(em('cross', 'x'), m.message, 'err-ev');
         break;
     }
   };
@@ -189,12 +208,12 @@ let _lastTrump = undefined;
 function setTrump(ti) {
   if (_lastTrump === ti) return;  // skip if unchanged
   _lastTrump = ti;
-  const sym = document.getElementById('trump-sym');
-  sym.innerHTML = '';
+  const trumpSym = document.getElementById('trump-sym');
+  trumpSym.innerHTML = '';
   if (ti != null) {
-    sym.appendChild(mkSuitImg(ti, 30));
+    trumpSym.appendChild(mkSuitImg(ti, 30));
   } else {
-    sym.textContent = 'â€”';
+    trumpSym.textContent = sym('em_dash', '-');
   }
   document.getElementById('trump-lbl').textContent = ti != null ? SL[ti] : 'Kein Trumpf';
 }
@@ -233,6 +252,42 @@ function actionObsForSeat(activeSeat) {
   return null;
 }
 
+function isSeatHumanControlled(seat) {
+  return effectiveMode(seat) === 'human';
+}
+
+function normalizeSeat(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(3, Math.trunc(n)));
+}
+
+function requestViewSeat(seat) {
+  const target = normalizeSeat(seat);
+  if (target === viewSeat || pendingViewSeat === target) return;
+  pendingViewSeat = target;
+  send({ cmd: 'set_view_seat', seat: target });
+}
+
+function currentViewSeat(activeSeat) {
+  if (followActiveSeat && activeSeat >= 0) return activeSeat;
+  return viewSeat;
+}
+
+function updateTurnState(obs, activeSeat, tableViewSeat) {
+  const el = document.getElementById('turn-state');
+  if (!el) return;
+  if (!obs || activeSeat < 0) {
+    el.textContent = 'Kein Spiel';
+    return;
+  }
+  const mode = effectiveMode(activeSeat);
+  const canAct = mode === 'human' || debugMode;
+  const activeLabel = PNAMES[activeSeat] || `P${activeSeat}`;
+  const viewLabel = PNAMES[tableViewSeat] || `P${tableViewSeat}`;
+  el.textContent = `Aktiv: ${activeLabel} (${mode}) | View: ${viewLabel} | Input: ${canAct ? 'frei' : 'gesperrt'}`;
+}
+
 // â”€â”€ 6. Main render orchestrator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function render() {
@@ -249,30 +304,29 @@ function render() {
   // Trump
   setTrump(obs.trump);
 
+  const active = getActiveSeat(obs);
+  const tableViewSeat = currentViewSeat(active);
+  if (followActiveSeat && active >= 0) requestViewSeat(active);
+
   // Hands (selective re-render)
-  for (let s = 0; s < 4; s++) renderHand(s, obs);
+  for (let s = 0; s < 4; s++) renderHand(s, obs, tableViewSeat);
   renderTrick(obs);
 
-  // Active player ring
-  const active = getActiveSeat(obs);
+  // Active + view ring
   for (let s = 0; s < 4; s++) {
-    document.getElementById('p' + s)?.classList.toggle('player-active', s === active);
+    const seatEl = document.getElementById('p' + s);
+    seatEl?.classList.toggle('player-active', s === active);
+    seatEl?.classList.toggle('player-view', !debugMode && s === tableViewSeat);
+  }
+  updateTurnState(obs, active, tableViewSeat);
+  const viewSel = document.getElementById('view-seat');
+  if (viewSel) {
+    const desired = (followActiveSeat && active >= 0) ? 'active' : String(viewSeat);
+    if (viewSel.value !== desired) viewSel.value = desired;
   }
 
   // Bid/action area (shows active player's non-card actions if human or debug)
   renderBidArea(obs, active);
-
-  // Auto-play AI turns only when autoplay is enabled.
-  if (active >= 0 && !debugMode && auto) {
-    const isHumanActive = effectiveMode(active) === 'human';
-    if (!isHumanActive) {
-      // It's the AI's turn. Throttle slightly for visual pacing
-      setTimeout(() => {
-        // Check again if it's still their turn, to avoid stacking commands
-        if (gs && getActiveSeat(gs.obs) === active) send({ cmd: 'proceed' });
-      }, 400);
-    }
-  }
 
   // Event log (only if token stream grew)
   renderEventLog(obs);
@@ -290,7 +344,7 @@ function render() {
 
 // â”€â”€ 7. Hand renderer (selective animation) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-function renderHand(s, obs) {
+function renderHand(s, obs, tableViewSeat) {
   const el = document.getElementById('h' + s);
   if (!el) return;
 
@@ -327,15 +381,25 @@ function renderHand(s, obs) {
 
   // Hand visibility policy:
   // - Debug mode: full information (all seats face-up via debug payload where available).
-  // - Normal mode: only the currently active human seat is face-up.
+  // - Normal mode:
+  //   1) always show selected view seat,
+  //   2) keep all human-controlled seats visible for playability/continuity.
   const debugHand = allHands[s] || allHands[String(s)] || null;
   const seatView = seatObs(s);
-  const canShowHumanSeat = isHuman && isMyTurn;
+  const isHumanSeat = isSeatHumanControlled(s);
+  const canShowViewSeat = s === tableViewSeat;
   let faceUpCards = null;
   if (debugMode) {
     faceUpCards = (s === 0) ? obs.my_hand_indices : debugHand;
-  } else if (canShowHumanSeat) {
+  } else if (isHumanSeat || canShowViewSeat) {
     faceUpCards = (s === 0) ? obs.my_hand_indices : seatView?.my_hand_indices;
+  }
+
+  // Persist last known cards so hands do not disappear while waiting for a fresh POV view.
+  if (Array.isArray(faceUpCards) && faceUpCards.length > 0) {
+    lastKnownHandsBySeat[s] = [...faceUpCards];
+  } else if (!debugMode && (isHumanSeat || canShowViewSeat) && lastKnownHandsBySeat[s].length > 0) {
+    faceUpCards = [...lastKnownHandsBySeat[s]];
   }
 
   if (faceUpCards?.length) {
@@ -415,7 +479,7 @@ function renderHand(s, obs) {
             }
           } else if (currAi !== undefined) {
             send({ cmd: 'human_action', action_list_idx: currAi });
-            evLog('ðŸ«µ', `P${s} spielt: <b>${VL[i % 9]} ${SL[(i / 9) | 0]}</b>`);
+            evLog(em('play', 'play'), `P${s} spielt: <b>${VL[i % 9]} ${SL[(i / 9) | 0]}</b>`);
           }
         });
 
@@ -514,7 +578,7 @@ function renderTrick(obs) {
   trickIdxs.forEach((ci, i) => {
     const isNew = !isLingering && !prevSet.has(ci);
     const card = mkCard(ci, 'trick' + (isLingering ? ' lingering' : ''), isNew);
-    if (!isLingering) card.title += ' â†’ ' + PNAMES[trickPlayers[i] ?? i];
+    if (!isLingering) card.title += ' ' + sym('right_arrow', '->') + ' ' + PNAMES[trickPlayers[i] ?? i];
     tc.appendChild(card);
   });
   prevTrickKey = newKey;
@@ -523,7 +587,7 @@ function renderTrick(obs) {
   if (isLingering) {
     tinfo.textContent = `Stich ${obs.trick_number - 1} abgeschlossen`;
   } else {
-    tinfo.textContent = `Stich ${obs.trick_number ?? 1} Â· ${trickIdxs.length}/4 Karten`;
+    tinfo.textContent = `Stich ${obs.trick_number ?? 1} ${sym('middle_dot', '-')} ${trickIdxs.length}/4 Karten`;
   }
 }
 // â”€â”€ 9. Bid area / stepper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -561,7 +625,7 @@ function renderBidArea(obs, active) {
       txt.style.opacity = '1';
       txt.style.cursor = 'default';
       if (selected.length < target) {
-        txt.textContent = `Wähle Karten (${selected.length}/${target})`;
+        txt.textContent = `Waehle Karten (${selected.length}/${target})`;
       } else {
         txt.textContent = `Schieben...`;
       }
@@ -581,7 +645,7 @@ function renderBidArea(obs, active) {
           selectedPassCards.clear();
         };
       } else {
-        btn.textContent = `Wähle 4 Karten (${selectedPassCards.size}/4)`;
+        btn.textContent = `Waehle 4 Karten (${selectedPassCards.size}/4)`;
         btn.disabled = true;
         btn.style.opacity = '0.5';
       }
@@ -595,7 +659,12 @@ function renderBidArea(obs, active) {
   if (!canAct || !nonCard.length) { ba.innerHTML = ''; return; }
 
   // Avoid re-rendering if same action set (hash)
-  const aHash = nonCard.map(la => la.action_list_idx + '_' + la.action_token).join('|');
+  const aHash = [
+    String(active),
+    ...nonCard.map(
+      la => `${la.action_list_idx}_${la.action_token}_${la.bid_value ?? ''}_${la.suit_idx ?? ''}`
+    )
+  ].join('|');
   if (ba.dataset.ahash === aHash) return;
   ba.dataset.ahash = aHash;
   ba.innerHTML = '';
@@ -643,8 +712,8 @@ function renderBidArea(obs, active) {
     };
 
     const step50 = Math.max(1, bidVals.findIndex(v => v >= bidVals[0] + 50));
-    row.appendChild(mkStep('âˆ’50', -step50));
-    row.appendChild(mkStep('âˆ’5', -1));
+    row.appendChild(mkStep(`${sym('minus_sign', '-')}50`, -step50));
+    row.appendChild(mkStep(`${sym('minus_sign', '-')}5`, -1));
     row.appendChild(valDisp);
     row.appendChild(mkStep('+5', +1));
     row.appendChild(mkStep('+50', +step50));
@@ -654,7 +723,7 @@ function renderBidArea(obs, active) {
       const la = bidActions.find(a => a.bid_value === bidStepValue);
       if (la) {
         send({ cmd: 'human_action', action_list_idx: la.action_list_idx });
-        evLog('ðŸ’°', `Du bietest: <b>${bidStepValue}</b>`, 'bid-ev');
+        evLog(em('money', '$'), `Du bietest: <b>${bidStepValue}</b>`, 'bid-ev');
       }
     });
     ba.appendChild(row);
@@ -669,30 +738,30 @@ function renderBidArea(obs, active) {
       case 42: label = 'Passe'; cls += ' pass'; break;
       case 43: label = 'Gib ab'; cls += ' pass'; break;
       case 44:
-        label = 'ðŸ† Trumpf' + (la.suit_idx != null ? `: ${SL[la.suit_idx]}` : '');
+        label = `${em('trophy', 'T')} Trumpf` + (la.suit_idx != null ? `: ${SL[la.suit_idx]}` : '');
         cls += ' act'; break;
       case 45: label = 'Paar?'; cls += ' act'; break;
       case 46:
         label = 'Halb?' + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
         cls += ' act'; break;
       case 47:
-        label = 'âœ… Ja (Paar)' + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
+        label = `${em('check', 'Y')} Ja (Paar)` + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
         cls += ' act'; break;
       case 48:
-        label = 'âŒ Nein (Paar)' + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
+        label = `${em('cross', 'N')} Nein (Paar)` + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
         cls += ' pass'; break;
       case 49:
-        label = 'âœ… Ja (Halb)' + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
+        label = `${em('check', 'Y')} Ja (Halb)` + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
         cls += ' act'; break;
       case 50:
-        label = 'âŒ Nein (Halb)' + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
+        label = `${em('cross', 'N')} Nein (Halb)` + (la.suit_idx != null ? ` ${SL[la.suit_idx]}` : '');
         cls += ' pass'; break;
       default: label = `Aktion ${la.action_token}`;
     }
     btn.className = cls; btn.textContent = label;
     btn.addEventListener('click', () => {
       send({ cmd: 'human_action', action_list_idx: la.action_list_idx });
-      evLog('ðŸ«µ', `Du: <b>${label}</b>`, 'bid-ev');
+      evLog(em('play', 'act'), `Du: <b>${label}</b>`, 'bid-ev');
     });
     ba.appendChild(btn);
   });
@@ -709,7 +778,7 @@ function showLastTrick(cards, winner, pts) {
   row.dataset.key = key;
   row.style.display = '';
   document.getElementById('lt-label').textContent =
-    `Letzter Stich Â· ${PNAMES[winner] ?? 'P' + winner} gewinnt (${pts} Pkt.)`;
+    `Letzter Stich ${sym('middle_dot', '-')} ${PNAMES[winner] ?? 'P' + winner} gewinnt (${pts} Pkt.)`;
   ltc.innerHTML = '';
   cards.forEach(cardStr => {
     const idx = parseCardStr(cardStr);
@@ -723,16 +792,19 @@ function showLastTrick(cards, winner, pts) {
   });
 }
 
-/** Parse Rust Display format: "6 GrÃ¼n", "A Herz", etc. */
+/** Parse Rust Display format: "6 Gruen", "A Herz", etc. */
 function parseCardStr(s) {
   const VMAP = { '6': 0, '7': 1, '8': 2, '9': 3, 'U': 4, 'O': 5, 'K': 6, '10': 7, 'A': 8 };
-  const SMAP = {
-    'GrÃ¼n': 0, 'Eichel': 1, 'Schellen': 2, 'Herz': 3,
-    'Green': 0, 'Acorns': 1, 'Bells': 2, 'Red': 3
-  };
   const p = s.trim().split(/\s+/);
   if (p.length < 2) return -1;
-  const vi = VMAP[p[0]], si = SMAP[p[1]];
+  const vi = VMAP[p[0]];
+  const suitRaw = p[1].toLowerCase();
+  const suit = suitRaw === 'gr\u00fcn' ? 'gruen' : suitRaw;
+  const SMAP = {
+    gruen: 0, eichel: 1, schellen: 2, herz: 3,
+    green: 0, acorns: 1, bells: 2, red: 3
+  };
+  const si = SMAP[suit];
   return (vi == null || si == null) ? -1 : si * 9 + vi;
 }
 
@@ -778,7 +850,7 @@ function renderEventLog(obs) {
   const isSu = t => t >= 60 && t <= 63;
   const isCa = t => t >= 70 && t <= 105;
   const isBV = t => t >= 120;
-  const ROLES = { 30: 'VH', 31: 'MH', 32: 'LH', 33: 'RH', 34: 'â€”' };
+  const ROLES = { 30: 'VH', 31: 'MH', 32: 'LH', 33: 'RH', 34: sym('em_dash', '-') };
 
   const pn = t => `P${t - 20}`;
   const sn = t => SL[t - 60] ?? '?';
@@ -793,10 +865,14 @@ function renderEventLog(obs) {
     if (t === 1) {
       // START_GAME followed by role
       const r = i < tokens.length ? eat() : 0;
-      raw.push({ ico: 'ðŸŽ´', txt: `Spiel Â· Rolle: <b>${ROLES[r] ?? '?'}</b>`, cls: '' });
+      raw.push({
+        ico: em('cards', '*'),
+        txt: `Spiel ${sym('middle_dot', '-')} Rolle: <b>${ROLES[r] ?? '?'}</b>`,
+        cls: ''
+      });
 
     } else if (t >= 10 && t < 19) {
-      raw.push({ ico: 'ðŸ“‹', txt: `<b>â”€â”€ Stich ${t - 9} â”€â”€</b>`, cls: '' });
+      raw.push({ ico: em('scroll', '#'), txt: `<b>Stich ${t - 9}</b>`, cls: '' });
 
     } else if (isP(t)) {
       if (i >= tokens.length) break;
@@ -805,51 +881,51 @@ function renderEventLog(obs) {
 
       if (act === 40) {
         let c = '?'; if (i < tokens.length && isCa(peek())) c = cn(eat());
-        raw.push({ ico: 'ðŸƒ', txt: `<b>${who}</b>: spielt <b>${c}</b>`, cls: '' });
+        raw.push({ ico: em('play', '>'), txt: `<b>${who}</b>: spielt <b>${c}</b>`, cls: '' });
 
       } else if (act === 41) {
         let v = ''; if (i < tokens.length && isBV(peek())) v = bv(eat());
-        raw.push({ ico: 'ðŸ’°', txt: `<b>${who}</b>: Biete <b>${v}</b>`, cls: 'bid-ev' });
+        raw.push({ ico: em('money', '$'), txt: `<b>${who}</b>: Biete <b>${v}</b>`, cls: 'bid-ev' });
 
       } else if (act === 42) {
-        raw.push({ ico: 'â›”', txt: `<b>${who}</b>: Passe`, cls: '' });
+        raw.push({ ico: em('blocked', '!'), txt: `<b>${who}</b>: Passe`, cls: '' });
 
       } else if (act === 43) {
-        raw.push({ ico: 'ðŸ¤', txt: `<b>${who}</b>: Gibt Karten`, cls: '' });
+        raw.push({ ico: em('handshake', '+'), txt: `<b>${who}</b>: Gibt Karten`, cls: '' });
         while (i < tokens.length && (isCa(peek()) || peek() === 110)) eat();
 
       } else if (act === 44) {
         const su = sfx();
-        raw.push({ ico: 'ðŸ†', txt: `<b>${who}</b>: Trumpf<b>${su}</b>`, cls: 'trump-ev' });
+        raw.push({ ico: em('trophy', 'T'), txt: `<b>${who}</b>: Trumpf<b>${su}</b>`, cls: 'trump-ev' });
 
       } else if (act === 45) {
-        raw.push({ ico: 'â“', txt: `<b>${who}</b>: Paar?`, cls: '' });
+        raw.push({ ico: em('question', '?'), txt: `<b>${who}</b>: Paar?`, cls: '' });
 
       } else if (act === 46) {
         const su = sfx();
-        raw.push({ ico: 'â“', txt: `<b>${who}</b>: Halb?<b>${su}</b>`, cls: '' });
+        raw.push({ ico: em('question', '?'), txt: `<b>${who}</b>: Halb?<b>${su}</b>`, cls: '' });
 
       } else if (act === 47) {
         const su = sfx();
-        raw.push({ ico: 'âœ…', txt: `<b>${who}</b>: Ja, Paar<b>${su}</b>`, cls: 'trump-ev' });
+        raw.push({ ico: em('check', '+'), txt: `<b>${who}</b>: Ja, Paar<b>${su}</b>`, cls: 'trump-ev' });
 
       } else if (act === 48) {
-        raw.push({ ico: 'âŒ', txt: `<b>${who}</b>: Nein (kein Paar)`, cls: '' });
+        raw.push({ ico: em('cross', 'x'), txt: `<b>${who}</b>: Nein (kein Paar)`, cls: '' });
 
       } else if (act === 49) {
         const su = sfx();
-        raw.push({ ico: 'âœ…', txt: `<b>${who}</b>: Ja, Halb<b>${su}</b>`, cls: 'trump-ev' });
+        raw.push({ ico: em('check', '+'), txt: `<b>${who}</b>: Ja, Halb<b>${su}</b>`, cls: 'trump-ev' });
 
       } else if (act === 50) {
         const su = sfx();
-        raw.push({ ico: 'âŒ', txt: `<b>${who}</b>: Nein (kein Halb${su})`, cls: '' });
+        raw.push({ ico: em('cross', 'x'), txt: `<b>${who}</b>: Nein (kein Halb${su})`, cls: '' });
       }
 
     } else if (t === 51) {
       // Trick won
       if (i < tokens.length && isP(peek())) {
         const w = eat();
-        raw.push({ ico: 'ðŸ…', txt: `<b>${pn(w)}</b> gewinnt den Stich`, cls: 'trick-win' });
+        raw.push({ ico: em('trick_win', '*'), txt: `<b>${pn(w)}</b> gewinnt den Stich`, cls: 'trick-win' });
       }
     }
     // unknown tokens: skip silently
@@ -947,7 +1023,7 @@ function renderAI(obs) {
       const seat = +ev.target.dataset.seat;
       const ckpt = d.querySelector('.ctrl-ckpt')?.value || 'latest.pt';
       send({ cmd: 'reload_model', seat, checkpoint: ckpt });
-      evLog('↻', `P${seat} Modell neu geladen: <b>${ckpt}</b>`);
+      evLog(em('reload', 'R'), `P${seat} Modell neu geladen: <b>${ckpt}</b>`);
     });
     d.querySelector('.refresh-ckpt')?.addEventListener('click', () => {
       send({ cmd: 'list_checkpoints' });
@@ -1005,7 +1081,7 @@ function renderDebugPanel(obs) {
   const names = ['Du (P0)', 'P1 Links', 'P2 Partner', 'P3 Rechts'];
 
   // â”€â”€ Section 1: All hands with face-up cards + belief overlay â”€â”€
-  const handsTitle = mk('div', 'dbg-section-title', 'ðŸƒ Alle HÃ¤nde');
+  const handsTitle = mk('div', 'dbg-section-title', `${em('play', 'C')} Alle Haende`);
   p.appendChild(handsTitle);
 
   for (let s = 0; s < 4; s++) {
@@ -1014,7 +1090,11 @@ function renderDebugPanel(obs) {
     const possible = dbgPossible[s > 0 ? s - 1 : 0] || [];
 
     const section = mk('div', 'dbg-seat');
-    const lbl = mk('div', 'dbg-seat-lbl', names[s] + (hand.length ? ` (${hand.length} Karten)` : ' â€” unbekannt'));
+    const lbl = mk(
+      'div',
+      'dbg-seat-lbl',
+      names[s] + (hand.length ? ` (${hand.length} Karten)` : ` ${sym('em_dash', '-')} unbekannt`)
+    );
     section.appendChild(lbl);
 
     if (hand.length) {
@@ -1043,7 +1123,7 @@ function renderDebugPanel(obs) {
           `display:inline-flex;flex-direction:column;align-items:center;font-size:8px;` +
           `padding:1px 2px;border-radius:3px;margin:1px;` +
           `background:${ok ? 'rgba(34,197,94,.2)' : pos ? 'rgba(248,181,0,.08)' : 'rgba(248,113,113,.1)'}`;
-        sp.title = `${VL[va]} ${SL[su]}: ${ok ? 'âœ” Sicher' : pos ? 'MÃ¶glich' : 'âœ˜ Fehlt'}`;
+        sp.title = `${VL[va]} ${SL[su]}: ${ok ? `${em('check', '+')} Sicher` : pos ? 'Moeglich' : `${em('cross', 'x')} Fehlt`}`;
         sp.appendChild(mkSuitImg(su, 10));
         const vsp = document.createElement('span');
         vsp.style.color = ok ? '#22c55e' : pos ? '#94a3b8' : '#f87171';
@@ -1130,13 +1210,13 @@ function renderDebugPanel(obs) {
 
   const tricks = dbgTricks.length ? dbgTricks : (gs?.info?.tricks || []);
   if (tricks.length) {
-    const tTitle = mk('div', 'dbg-section-title', `ðŸ… Gespielte Stiche (${tricks.length})`);
+    const tTitle = mk('div', 'dbg-section-title', `${em('trick_win', '*')} Gespielte Stiche (${tricks.length})`);
     p.appendChild(tTitle);
 
     tricks.forEach((trick, ti) => {
       const tRow = mk('div', 'dbg-trick-row');
       const tLbl = mk('span', 'dbg-trick-lbl',
-        `#${ti + 1} â†’ ${PNAMES[trick.winner] ?? 'P' + trick.winner} (+${trick.points ?? 0})`);
+        `#${ti + 1} ${sym('right_arrow', '->')} ${PNAMES[trick.winner] ?? 'P' + trick.winner} (+${trick.points ?? 0})`);
       tRow.appendChild(tLbl);
 
       const cards = trick.cards || [];
@@ -1206,9 +1286,11 @@ document.getElementById('dbg').addEventListener('change', ev => {
 function clearLocalState() {
   lastTokenLen = 0;
   prevHand.fill(''); prevTrickKey = '';
+  for (let s = 0; s < 4; s++) lastKnownHandsBySeat[s] = [];
   _lastTrump = undefined;
   document.getElementById('evlog').innerHTML = '';
   document.getElementById('last-trick-row').style.display = 'none';
+  document.getElementById('turn-state').textContent = 'Kein Spiel';
   document.getElementById('bid-area').dataset.ahash = '';
   selectedPassCardsBySeat.forEach(set => set.clear());
 }
@@ -1216,15 +1298,16 @@ function clearLocalState() {
 document.getElementById('bn').addEventListener('click', () => {
   clearLocalState();
   send({ cmd: 'new_game' });
-  evLog('ðŸŽ´', 'Neues Spiel gestartet.');
+  evLog(em('cards', '*'), 'Neues Spiel gestartet.');
 });
 
 document.getElementById('bp').addEventListener('click', () => send({ cmd: 'proceed' }));
 
 document.getElementById('ba').addEventListener('click', () => {
+  if (auto) return;
   auto = true;
   const b = document.getElementById('ba');
-  b.textContent = 'Auto LÃ¤uft';
+  b.textContent = 'Auto laeuft';
   b.className = 'btn ba';
   tick();
 });
@@ -1233,7 +1316,7 @@ document.getElementById('bq')?.addEventListener('click', () => {
   auto = false;
   clearTimeout(autoTm);
   const b = document.getElementById('ba');
-  b.textContent = 'â–¶ Auto';
+  b.textContent = `${em('play_button', '>')} Auto`;
   b.className = 'btn bs ba';
 });
 
@@ -1246,16 +1329,37 @@ document.getElementById('br')?.addEventListener('click', () => {
   }
   const seed = Number(seedText);
   if (!Number.isFinite(seed)) {
-    evLog('âŒ', 'Seed muss eine Zahl sein', 'err-ev');
+    evLog(em('cross', 'x'), 'Seed muss eine Zahl sein', 'err-ev');
     return;
   }
   send({ cmd: 'new_game', seed: Math.trunc(seed) });
 });
 
+document.getElementById('view-seat')?.addEventListener('change', ev => {
+  const value = String(ev.target.value || 'active');
+  if (value === 'active') {
+    followActiveSeat = true;
+    const active = getActiveSeat(gs?.obs);
+    if (active >= 0) requestViewSeat(active);
+  } else {
+    followActiveSeat = false;
+    requestViewSeat(normalizeSeat(value));
+  }
+  render();
+});
+
 function tick() {
   if (!auto) return;
-  send({ cmd: 'proceed' });
-  autoTm = setTimeout(tick, 800);
+  if (gs?.done) {
+    autoTm = setTimeout(tick, 400);
+    return;
+  }
+  const obs = gs?.obs || null;
+  const active = getActiveSeat(obs);
+  if (active >= 0 && effectiveMode(active) !== 'human') {
+    send({ cmd: 'proceed' });
+  }
+  autoTm = setTimeout(tick, 450);
 }
 
 // Connect â€” do NOT auto-start a new game. The server re-sends state on connect.

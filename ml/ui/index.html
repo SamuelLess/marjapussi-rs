@@ -17,11 +17,19 @@
       <button class="btn bs" id="bp">Step</button>
       <button class="btn bs ba" id="ba">Auto</button>
       <button class="btn bs" id="bq">Pause</button>
+      <select id="view-seat" class="seed-input" title="Sicht auf Seat">
+        <option value="active">View: Aktiv</option>
+        <option value="0">View: P0</option>
+        <option value="1">View: P1</option>
+        <option value="2">View: P2</option>
+        <option value="3">View: P3</option>
+      </select>
       <input id="seed" class="seed-input" type="text" placeholder="Seed">
       <button class="btn bs" id="br">Reset Seed</button>
       <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--dim);cursor:pointer">
         <input type="checkbox" id="dbg"> Debug
       </label>
+      <div id="turn-state">Kein Spiel</div>
     </div>
   </div>
 
@@ -101,7 +109,8 @@
     </div>
   </div>
 
-  <script src="/ui/app.js?v=4"></script>
+  <script src="/ui/emoji_map.js?v=1"></script>
+  <script src="/ui/app.js?v=5"></script>
 </body>
 
 </html>

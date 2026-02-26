@@ -4,7 +4,7 @@ GPU-accelerated training from generated NDJSON dataset.
 Features:
   - Streaming IterableDataset with shuffle buffer (constant RAM)
   - Multi-worker DataLoader + pin_memory for GPU throughput
-  - torch.cuda.amp mixed precision (fp16 for GTX 1080 / RTX 4090)
+  - torch.amp mixed precision (fp16/bf16 depending on hardware)
   - MC advantage as primary loss signal when available, outcome as fallback
   - Cosine LR schedule
 
@@ -13,7 +13,7 @@ Usage:
   python ml/train_from_dataset.py --data ml/data/dataset.ndjson --device cuda --batch 1024 --workers 4
 """
 
-import argparse, json, math, os, random, sys, time, warnings
+import argparse, json, math, os, random, sys, time
 from pathlib import Path
 from torch.utils.data import IterableDataset, DataLoader
 import torch, torch.nn as nn, torch.nn.functional as F
@@ -24,8 +24,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 from model import ACTION_FEAT_DIM, MarjapussiNet
 from env import obs_to_tensors
 from train.utils import Log
-
-warnings.filterwarnings("ignore", message=".*expandable_segments not supported on this platform.*")
 
 DEFAULT_CKPT_DIR = Path(__file__).parent / "checkpoints"
 

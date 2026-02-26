@@ -94,6 +94,7 @@ class GameManager:
         self.done = True
         self.info: dict[str, Any] = {}
         self.last_seed: Optional[int] = None
+        self.view_seat: int = 0
 
         self.model_cache: dict[str, Any] = {}
         self.seat_models: dict[int, Any] = {}
@@ -127,6 +128,11 @@ class GameManager:
         if raw.exists():
             return raw
 
+        # Allow paths relative to repository ml/ root, e.g. runs/<name>/checkpoints/latest.pt
+        rel = ML / raw
+        if rel.exists():
+            return rel
+
         if raw.suffix == "":
             p = CHECKPOINT_DIR / f"{checkpoint}.pt"
             return p if p.exists() else None
@@ -135,12 +141,33 @@ class GameManager:
         return p if p.exists() else None
 
     def available_checkpoints(self) -> list[str]:
-        files = sorted(
-            CHECKPOINT_DIR.glob("*.pt"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-        names = [p.name for p in files]
+        roots: list[Path] = [CHECKPOINT_DIR]
+        if RUNS_DIR.exists():
+            roots.extend([p / "checkpoints" for p in RUNS_DIR.iterdir() if p.is_dir()])
+
+        files: list[Path] = []
+        for root in roots:
+            if not root.exists():
+                continue
+            files.extend(list(root.glob("*.pt")))
+
+        # De-duplicate by absolute path, newest first.
+        dedup: dict[str, Path] = {}
+        for p in files:
+            dedup[str(p.resolve())] = p
+        files = sorted(dedup.values(), key=lambda p: p.stat().st_mtime, reverse=True)
+
+        names: list[str] = []
+        for p in files:
+            if p.parent.resolve() == CHECKPOINT_DIR.resolve():
+                names.append(p.name)
+            else:
+                try:
+                    names.append(str(p.resolve().relative_to(ML.resolve())))
+                except Exception:
+                    names.append(str(p))
+
+        # Prefer canonical latest first if present.
         if "latest.pt" in names:
             names.remove("latest.pt")
             names.insert(0, "latest.pt")
@@ -167,12 +194,35 @@ class GameManager:
         try:
             model = MarjapussiNet()
             state = torch.load(str(path), map_location="cpu")
-            model.load_state_dict(state, strict=False)
+            if isinstance(state, dict) and "state_dict" in state and isinstance(state["state_dict"], dict):
+                state = state["state_dict"]
+
+            model_state = model.state_dict()
+            compatible = {}
+            skipped = 0
+            for k, v in state.items():
+                if k in model_state and hasattr(v, "shape") and model_state[k].shape == v.shape:
+                    compatible[k] = v
+                else:
+                    skipped += 1
+
+            if not compatible:
+                return None, path.name, (
+                    f"Incompatible checkpoint {path.name}: no matching tensor shapes for current model."
+                )
+
+            model.load_state_dict(compatible, strict=False)
             model.eval()
             self.model_cache[key] = model
-            return model, path.name, None
+            warn = None
+            if skipped > 0:
+                warn = (
+                    f"Partially loaded {path.name}: "
+                    f"{len(compatible)} tensors loaded, {skipped} skipped (model/version mismatch)."
+                )
+            return model, path.name, warn
         except Exception as e:
-            return None, path.name, f"Failed to load checkpoint {path}: {e}"
+            return None, path.name, f"Failed to load checkpoint {path.name}: {e}"
 
     def _try_enable_model_for_seat(self, seat: int, checkpoint: Optional[str]) -> None:
         model, resolved, err = self._load_model(checkpoint)
@@ -222,6 +272,11 @@ class GameManager:
         self.info = {}
         self.last_seed = seed
         self.seat_debug.clear()
+
+    def set_view_seat(self, seat: int) -> None:
+        if seat < 0 or seat > 3:
+            raise ValueError(f"view seat out of range: {seat}")
+        self.view_seat = int(seat)
 
     def set_controller(self, seat: int, mode: str, checkpoint: Optional[str] = None) -> None:
         if seat < 0 or seat > 3:
@@ -399,7 +454,45 @@ class GameManager:
         if mode == "human":
             return
 
-        seat_obs = self.env.observe_pov(active)
+        seat_obs: dict[str, Any]
+        observe_err: Optional[str] = None
+        try:
+            seat_obs = self.env.observe_pov(active)
+        except Exception as e:
+            observe_err = str(e)
+            # Fallback for robustness: if POV observation fails, keep game progressing.
+            # For active P0 we can still use root observation; otherwise fall back to heuristic action.
+            if active == 0 and isinstance(self.obs, dict):
+                seat_obs = self.obs
+            else:
+                try:
+                    pos = int(self.env.get_heuristic_action())
+                    legal_root = (self.obs or {}).get("legal_actions", [])
+                    if legal_root:
+                        pos = max(0, min(pos, len(legal_root) - 1))
+                        chosen = legal_root[pos]
+                        self.seat_debug[active] = {
+                            "probs": [],
+                            "entropy": None,
+                            "chosen_action_pos": pos,
+                            "chosen_action_list_idx": int(chosen.get("action_list_idx", 0)),
+                            "chosen_label": action_label(chosen),
+                            "status": "fallback_heuristic",
+                            "error": f"observe_pov failed: {observe_err}",
+                        }
+                        self._step_action_idx(int(chosen.get("action_list_idx", 0)))
+                except Exception as he:
+                    self.seat_debug[active] = {
+                        "probs": [],
+                        "entropy": None,
+                        "chosen_action_pos": 0,
+                        "chosen_action_list_idx": None,
+                        "chosen_label": None,
+                        "status": "observe_error",
+                        "error": f"observe_pov failed: {observe_err}; heuristic fallback failed: {he}",
+                    }
+                return
+
         legal = seat_obs.get("legal_actions", [])
         if not legal:
             return
@@ -440,6 +533,8 @@ class GameManager:
             **preview,
             "status": "model",
         }
+        if observe_err:
+            self.seat_debug[active]["error"] = f"observe_pov recovered: {observe_err}"
         chosen_idx = int(preview.get("chosen_action_list_idx", 0))
         self._step_action_idx(chosen_idx)
 
@@ -498,15 +593,21 @@ class GameManager:
         views: dict[str, Any] = {}
         if self.env is None or self.obs is None:
             return views
+
+        seats: set[int] = set()
+        if self.view_seat > 0:
+            seats.add(self.view_seat)
+
+        # Ensure a human-controlled active non-P0 seat is always viewable for input.
         active = self.active_seat()
-        if active <= 0:
-            return views
-        if self._effective_mode(active) != "human":
-            return views
-        try:
-            views[str(active)] = self.env.observe_pov(active)
-        except Exception as e:
-            views[str(active)] = {"error": str(e)}
+        if active > 0 and self._effective_mode(active) == "human":
+            seats.add(active)
+
+        for seat in sorted(seats):
+            try:
+                views[str(seat)] = self.env.observe_pov(seat)
+            except Exception as e:
+                views[str(seat)] = {"error": str(e)}
         return views
 
     def state(self) -> dict[str, Any]:
@@ -518,6 +619,7 @@ class GameManager:
             "controllers": self.controller_payload(),
             "last_seed": self.last_seed,
             "active_seat": self.active_seat(),
+            "view_seat": self.view_seat,
             "seat_views": self.seat_views(),
             "checkpoints": self.available_checkpoints(),
             "torch_ok": TORCH_OK,
@@ -713,6 +815,9 @@ async def handle(ws: web.WebSocketResponse, cmd: dict[str, Any]) -> None:
         mode = str(cmd.get("mode", "heuristic"))
         checkpoint = cmd.get("checkpoint")
         game.set_controller(seat, mode, checkpoint)
+    elif act == "set_view_seat":
+        seat = int(cmd.get("seat", 0))
+        game.set_view_seat(seat)
     elif act == "reload_model":
         seat = cmd.get("seat")
         checkpoint = cmd.get("checkpoint")

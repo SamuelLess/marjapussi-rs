@@ -597,6 +597,11 @@ A local web app (`ml/ui/`) for watching and interacting with AI self-play.
 - Accepts: `proceed`, `human_action`, `take_over_seat`, `load_checkpoint`
 - Tails `ml/runs/latest/log.jsonl` → forwards training events to UI
 
+Quick start via `just`:
+- `just ui`
+- `just ui checkpoint=latest port=8765`
+- `just ui checkpoint=my_run_best.pt port=18765`
+
 ---
 
 *This document is the living plan for the ML experiment. Update as implementation proceeds.*

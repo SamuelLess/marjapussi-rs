@@ -78,6 +78,24 @@ body {
   font: 500 12px var(--font);
 }
 
+#view-seat.seed-input {
+  width: 110px;
+}
+
+#turn-state {
+  min-width: 170px;
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--dim);
+  font: 500 11px var(--font);
+  border: 1px solid var(--bd);
+  background: var(--bg3);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
 /* Buttons */
 .btn {
   border: none;
@@ -336,6 +354,11 @@ body {
   color: var(--blue);
   background: rgba(88, 166, 255, .15);
   animation: pulse-ring 1.6s ease-in-out infinite
+}
+
+.player-view>.plbl>.badge {
+  box-shadow: 0 0 0 2px var(--warn);
+  border-color: var(--warn);
 }
 
 @keyframes pulse-ring {

@@ -44,7 +44,20 @@ Optimized local ML setup (Git Bash):
 
 1. `just setup-ml`
 2. `just ui`
-3. `just train-65k`
+3. `just ui checkpoint=latest port=8765`
+4. `just ui checkpoint=my_run_best.pt port=18765`
+5. `just train-65k`
+
+Notes:
+
+1. `just ui` now uses an isolated Rust build at `target/ui_runtime`, so training can keep running in parallel.
+2. If you accidentally pass `checkpoint=...` / `port=...` as literal values, `just ui` normalizes them.
+
+UI notes:
+
+1. `just ui` exists and starts `ml/ui_server.py`.
+2. Open `http://localhost:<port>` in your browser.
+3. Use `just --list` to see all recipes.
 
 ## License
 

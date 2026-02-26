@@ -152,6 +152,8 @@ class MarjapussiEnv:
         resp = _send(self.proc, cmd)
         if resp.get("type") == "error":
             raise RuntimeError(resp["message"])
+        if "obs" not in resp:
+            raise RuntimeError(f"Invalid new_game response keys: {sorted(resp.keys())}")
         self._obs = resp["obs"]
         self._labels = resp.get("labels")
         self._done = resp.get("done", False)
@@ -162,9 +164,17 @@ class MarjapussiEnv:
         resp = _send(self.proc, {"cmd": "step", "action_idx": action_idx})
         if resp.get("type") == "error":
             raise RuntimeError(resp["message"])
-        self._obs = resp["obs"]
+        if "obs" in resp:
+            self._obs = resp["obs"]
+        elif resp.get("type") == "done":
+            # Backward compatibility for older server responses.
+            # Keep last observation so callers can still render terminal state.
+            if self._obs is None:
+                self._obs = {}
+        else:
+            raise RuntimeError(f"Invalid step response keys: {sorted(resp.keys())}")
         self._labels = resp.get("labels")
-        self._done = resp.get("done", False)
+        self._done = bool(resp.get("done", resp.get("type") == "done"))
         info = resp.get("outcome") or {}
         return self._obs, self._done, info
 
@@ -180,6 +190,8 @@ class MarjapussiEnv:
         resp = _send(self.proc, {"cmd": "debug_pass", "card_indices": card_indices})
         if resp.get("type") == "error":
             raise RuntimeError(resp["message"])
+        if "obs" not in resp:
+            raise RuntimeError(f"Invalid debug_pass response keys: {sorted(resp.keys())}")
         self._obs = resp["obs"]
         self._labels = resp.get("labels")
         self._done = resp.get("done", False)
@@ -192,6 +204,10 @@ class MarjapussiEnv:
         else:
             cmd = {"cmd": "observe_pov", "pov": int(pov)}
         resp = _send(self.proc, cmd)
+        if resp.get("type") == "error":
+            raise RuntimeError(resp.get("message", "observe failed"))
+        if "obs" not in resp:
+            raise RuntimeError(f"Invalid observe response keys: {sorted(resp.keys())}")
         self._labels = resp.get("labels")
         return resp["obs"]
 
