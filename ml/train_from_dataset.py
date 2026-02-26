@@ -24,8 +24,14 @@ import torch.optim as optim
 from torch.amp import GradScaler, autocast
 
 sys.path.insert(0, str(Path(__file__).parent))
-from model import ACTION_FEAT_DIM, MarjapussiNet
-from env import obs_to_tensors
+from model import ACTION_FEAT_DIM
+from env import SUPPORTED_OBS_SCHEMA_VERSION, obs_to_tensors
+from model_factory import (
+    build_checkpoint_payload,
+    create_model,
+    load_state_compatible,
+    parse_checkpoint,
+)
 from train.utils import Log
 
 DEFAULT_CKPT_DIR = Path(__file__).parent / "checkpoints"
@@ -182,6 +188,8 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
           device: str = "cpu", ckpt: str | None = None, workers: int = 4,
           log_every: int = 500, amp: bool = True, max_steps: int = 0,
           bid_weight: float = 1.0, pass_weight: float = 1.0,
+          model_family: str = "legacy", model_config: str | None = None,
+          strict_param_budget: int | None = None,
           lr_schedule: str = "plateau", lr_min: float = 1e-5,
           lr_warmup_steps: int = 128,
           lr_plateau_patience: int = 1, lr_plateau_factor: float = 0.5,
@@ -191,17 +199,30 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
     ckpt_dir = Path(checkpoints_dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-    model = MarjapussiNet().to(device)
+    model, model_meta = create_model(
+        model_family=model_family,
+        model_config_path=model_config,
+        strict_param_budget=strict_param_budget,
+    )
+    model = model.to(device)
     Log.success(
-        f"Supervised pretraining | epochs={epochs} | batch={batch} | workers={workers} | device={device}"
+        f"Supervised pretraining | epochs={epochs} | batch={batch} | workers={workers} | device={device} | family={model_meta.get('model_family')}"
     )
     Log.info(
         f"Phase/action emphasis: bid_weight={bid_weight:.2f}, pass_weight={pass_weight:.2f}"
     )
     Log.info(f"Model params: {model.param_count():,}")
     if ckpt and Path(ckpt).exists():
-        model.load_state_dict(torch.load(ckpt, map_location=device))
-        Log.info(f"Loaded checkpoint: {ckpt}")
+        state_dict, ckpt_meta, _ = parse_checkpoint(ckpt, map_location=device)
+        loaded, skipped = load_state_compatible(model, state_dict)
+        family_note = ckpt_meta.get("model_family")
+        if family_note and family_note != model_meta.get("model_family"):
+            Log.warn(
+                f"Checkpoint family mismatch: ckpt={family_note}, requested={model_meta.get('model_family')}. "
+                f"Loaded compatible tensors only ({loaded} loaded, {skipped} skipped)."
+            )
+        else:
+            Log.info(f"Loaded checkpoint: {ckpt} ({loaded} tensors, {skipped} skipped)")
 
     use_amp = amp and device.startswith("cuda")
     scaler  = GradScaler("cuda", enabled=use_amp)
@@ -347,6 +368,20 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
         avg_loss = sum_loss / max(1, step)
         avg_bc = sum_bc / max(1, step)
         avg_pts = sum_pts / max(1, step)
+        payload = build_checkpoint_payload(
+            model,
+            metadata={
+                **model_meta,
+                "schema_version": SUPPORTED_OBS_SCHEMA_VERSION,
+                "action_encoding_version": 1,
+                "action_feat_dim": ACTION_FEAT_DIM,
+            },
+            extra_metadata={
+                "checkpoint_kind": "pretrain",
+                "epoch": epoch + 1,
+                "global_step": global_step,
+            },
+        )
         if sched is not None and lr_schedule == "plateau" and step > 0:
             lr_before = float(opt.param_groups[0]["lr"])
             sched.step(avg_loss)
@@ -357,8 +392,8 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
                     f"(epoch_loss={avg_loss:.4f})"
                 )
         ckpt_path = ckpt_dir / f"epoch_{epoch+1}.pt"
-        torch.save(model.state_dict(), ckpt_path)
-        torch.save(model.state_dict(), ckpt_dir / "latest.pt")
+        torch.save(payload, ckpt_path)
+        torch.save(payload, ckpt_dir / "latest.pt")
         Log.success(f"Epoch {epoch+1} Summary:")
         print(f"  - Steps:    {step}")
         print(f"  - Losses:   Total: {avg_loss:.4f} | BC: {avg_bc:.4f} | Pts: {avg_pts:.4f}")
@@ -381,6 +416,12 @@ if __name__ == "__main__":
     p.add_argument("--device",   default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--workers",  type=int,   default=4,       help="DataLoader workers")
     p.add_argument("--checkpoint", default=None)
+    p.add_argument("--model-family", choices=["legacy", "parallel_v2"], default="legacy",
+                   help="Model family to train")
+    p.add_argument("--model-config", default=None,
+                   help="Optional model config path (used by parallel_v2)")
+    p.add_argument("--strict-param-budget", type=int, default=None,
+                   help="Optional strict max-parameter gate")
     p.add_argument("--log-every", type=int,  default=500)
     p.add_argument("--max-steps", type=int, default=0,
                    help="Optional hard cap on optimizer steps (0 = disabled)")
@@ -416,6 +457,8 @@ if __name__ == "__main__":
 
     train(data_path=args.data, epochs=args.epochs, batch=args.batch,
           lr=args.lr, device=args.device, ckpt=args.checkpoint,
+          model_family=args.model_family, model_config=args.model_config,
+          strict_param_budget=args.strict_param_budget,
           workers=args.workers, log_every=args.log_every,
           amp=not args.no_amp, max_steps=args.max_steps,
           bid_weight=args.bid_weight, pass_weight=args.pass_weight,

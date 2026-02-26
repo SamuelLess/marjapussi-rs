@@ -8,6 +8,9 @@ ml_server_bin := if os == "windows" { "target/release/ml_server.exe" } else { "t
 ui_ml_server_bin := if os == "windows" { "target/ui_runtime/release/ml_server.exe" } else { "target/ui_runtime/release/ml_server" }
 ml_convert_bin := if os == "windows" { "target/release/ml_convert_legacy.exe" } else { "target/release/ml_convert_legacy" }
 cuda_alloc_env := if os == "windows" { "" } else { "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" }
+v2_model_family := "parallel_v2"
+v2_model_config := "ml/config/model_parallel_v2.toml"
+v2_model_args := "--model-family parallel_v2 --model-config ml/config/model_parallel_v2.toml --strict-param-budget 28000000"
 
 # Ensure virtual environment exists.
 ensure-venv:
@@ -193,6 +196,60 @@ train-1k-human run_name="human_smoke_1k": setup-ml build-human-dataset
 
 # Alias matching requested naming style.
 just-1k-human: train-1k-human
+
+# Small human-first v2 smoke profile (1,024 self-play games total).
+train-1k-human-v2 run_name="v2_human_smoke_1k": setup-ml build-human-dataset
+    @echo "Running small human-first v2 smoke run..."
+    @run_label="{{run_name}}"; \
+      case "$run_label" in run_name=*) run_label="${run_label#run_name=}" ;; esac; \
+      run_root="ml/runs/$run_label"; \
+      run_ckpt="$run_root/checkpoints"; \
+      run_logs="$run_root/logs"; \
+      run_bin_dir="$run_root/bin"; \
+      run_bin="$run_bin_dir/$(basename "{{ml_server_bin}}")"; \
+      mkdir -p "$run_ckpt" "$run_logs" "$run_bin_dir"; \
+      cp -f "{{ml_server_bin}}" "$run_bin"; \
+      {{cuda_alloc_env}} {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 6 --batch 256 --workers 2 --device cuda --max-steps 1024 --bid-weight 2.2 --pass-weight 2.8 {{v2_model_args}} --checkpoints-dir "$run_ckpt"; \
+      cp -f "$run_ckpt/latest.pt" "$run_ckpt/$run_label"_pretrain_final.pt; \
+      ML_SERVER_BIN="$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 32 --games-per-round 32 --workers 8 --mc-rollouts 2 --device cuda --eval-every 8 --checkpoint "$run_ckpt/$run_label"_pretrain_final.pt --ppo-epochs 2 --min-ppo-epochs 1 --max-ppo-epochs 3 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.20 --max-adv-calls-per-episode 2 {{v2_model_args}} --named-checkpoint "$run_label"_selfplay_final.pt --checkpoints-dir "$run_ckpt" --runs-dir "$run_logs"; \
+      cp -f "$run_ckpt/best.pt" "$run_ckpt/$run_label"_selfplay_best.pt; \
+      echo "Artifacts root: $run_root"
+
+# Fast 4k v2 profile with human-first warm start.
+train-4k-human-v2 run_name="v2_human_smoke_4k": setup-ml build-human-dataset
+    @echo "Running human-first 4k v2 training profile..."
+    @run_label="{{run_name}}"; \
+      case "$run_label" in run_name=*) run_label="${run_label#run_name=}" ;; esac; \
+      run_root="ml/runs/$run_label"; \
+      run_ckpt="$run_root/checkpoints"; \
+      run_logs="$run_root/logs"; \
+      run_bin_dir="$run_root/bin"; \
+      run_bin="$run_bin_dir/$(basename "{{ml_server_bin}}")"; \
+      mkdir -p "$run_ckpt" "$run_logs" "$run_bin_dir"; \
+      cp -f "{{ml_server_bin}}" "$run_bin"; \
+      {{cuda_alloc_env}} {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 10 --batch 256 --workers 2 --device cuda --max-steps 3072 --bid-weight 2.2 --pass-weight 2.8 {{v2_model_args}} --checkpoints-dir "$run_ckpt"; \
+      cp -f "$run_ckpt/latest.pt" "$run_ckpt/$run_label"_pretrain_final.pt; \
+      ML_SERVER_BIN="$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 64 --games-per-round 64 --workers 16 --mc-rollouts 2 --device cuda --eval-every 8 --checkpoint "$run_ckpt/$run_label"_pretrain_final.pt --ppo-epochs 2 --min-ppo-epochs 1 --max-ppo-epochs 3 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.20 --max-adv-calls-per-episode 2 {{v2_model_args}} --named-checkpoint "$run_label"_selfplay_final.pt --checkpoints-dir "$run_ckpt" --runs-dir "$run_logs"; \
+      cp -f "$run_ckpt/best.pt" "$run_ckpt/$run_label"_selfplay_best.pt; \
+      echo "Artifacts root: $run_root"
+
+# Full 65k v2 profile with stronger human pretraining.
+train-65k-human-v2 run_name="v2_human_first_65k": setup-ml build-human-dataset
+    @echo "Running full 65k human-first v2 profile..."
+    @run_label="{{run_name}}"; \
+      case "$run_label" in run_name=*) run_label="${run_label#run_name=}" ;; esac; \
+      run_root="ml/runs/$run_label"; \
+      run_ckpt="$run_root/checkpoints"; \
+      run_logs="$run_root/logs"; \
+      run_bin_dir="$run_root/bin"; \
+      run_bin="$run_bin_dir/$(basename "{{ml_server_bin}}")"; \
+      mkdir -p "$run_ckpt" "$run_logs" "$run_bin_dir"; \
+      cp -f "{{ml_server_bin}}" "$run_bin"; \
+      {{cuda_alloc_env}} {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 12 --batch 256 --workers 2 --device cuda --max-steps 6144 --bid-weight 2.5 --pass-weight 3.0 --lr-schedule plateau --lr 3e-4 --lr-min 6e-5 --lr-warmup-steps 384 --lr-plateau-patience 2 --lr-plateau-factor 0.7 --lr-plateau-threshold 8e-4 --lr-plateau-cooldown 1 {{v2_model_args}} --checkpoints-dir "$run_ckpt"; \
+      cp -f "$run_ckpt/latest.pt" "$run_ckpt/$run_label"_pretrain_final.pt; \
+      ML_SERVER_BIN="$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 512 --games-per-round 128 --workers 32 --mc-rollouts 4 --device cuda --eval-every 16 --checkpoint "$run_ckpt/$run_label"_pretrain_final.pt --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3 {{v2_model_args}} --named-checkpoint "$run_label"_selfplay_final.pt --checkpoints-dir "$run_ckpt" --runs-dir "$run_logs"; \
+      cp -f "$run_ckpt/best.pt" "$run_ckpt/$run_label"_selfplay_best.pt; \
+      echo "Artifacts root: $run_root"
 
 # 128k-game human-first run profile:
 # 1) convert legacy logs, 2) stronger supervised warm-start, 3) 512x256 (131,072 games) RL self-play.

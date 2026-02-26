@@ -8,6 +8,9 @@ workers = 8
 mc_rollouts = 4
 train_batch = 192
 lr = 0.0003
+# model_family = "legacy"
+# model_config = "ml/config/model_parallel_v2.toml"
+# strict_param_budget = 28000000
 start_round = 0
 eval_every = 10
 

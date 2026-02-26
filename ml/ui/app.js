@@ -518,13 +518,18 @@ function renderHand(s, obs, tableViewSeat) {
   directPassCombos.forEach(la => (la.pass_cards || []).forEach(ci => passCandidates.add(ci)));
   const selectedPassCards = selectedPassCardsBySeat[s];
 
-  if (isHuman && isMyTurn) {
+  if (canAct) {
     if (isPassing) {
       if (!activeObs) {
         selectedPassCards.clear();
       } else if (hasSequentialPass) {
         selectedPassCards.clear();
         (phaseObs.pass_selection_indices || []).forEach(ci => selectedPassCards.add(ci));
+      } else if (selectedPassCards.size) {
+        // Keep manual/direct selection coherent with currently legal pass candidates.
+        [...selectedPassCards].forEach(ci => {
+          if (!passCandidates.has(ci)) selectedPassCards.delete(ci);
+        });
       }
     } else {
       selectedPassCards.clear();
@@ -1176,6 +1181,7 @@ function renderAI(obs) {
     const cp = pendingSeatCheckpoint[String(s)] || ctrl.checkpoint || inf.checkpoint || 'latest.pt';
     const status = inf.status || '';
     const err = inf.error || '';
+    const family = ctrl.model_family || inf.model_family || '';
     const hidden = inf.hidden_summary || {};
 
     const d = document.createElement('div');
@@ -1201,7 +1207,7 @@ function renderAI(obs) {
       `<button class="tob reload-model" data-seat="${s}" ${mode === 'model' ? '' : 'disabled'}>Reload</button>` +
       `<button class="tob refresh-ckpt" data-seat="${s}">Refresh</button>` +
       `</div>` +
-      `<div class="ai-meta">${status || effMode}${err ? ` | ${err}` : ''}</div>`;
+      `<div class="ai-meta">${status || effMode}${family ? ` | ${family}` : ''}${err ? ` | ${err}` : ''}</div>`;
 
     const ckSel = d.querySelector('.ctrl-ckpt');
     const ckList = checkpointOptions.length ? checkpointOptions : ['latest.pt'];

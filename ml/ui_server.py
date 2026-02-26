@@ -31,16 +31,19 @@ RUNS_DIR = ML / "runs"
 sys.path.insert(0, str(ML))
 
 from env import MarjapussiEnv, obs_to_tensors
-
 try:
     import torch
     import torch.nn.functional as F
 
     from model import MarjapussiNet
+    from model_factory import create_model, load_state_compatible, parse_checkpoint
 
     TORCH_OK = True
 except ImportError as e:
     TORCH_OK = False
+    create_model = None
+    load_state_compatible = None
+    parse_checkpoint = None
     print(f"[warn] PyTorch not available: {e} - model controllers disabled")
 
 
@@ -141,6 +144,7 @@ class SeatController:
     mode: str
     checkpoint: Optional[str] = None
     error: Optional[str] = None
+    model_family: Optional[str] = None
 
 
 class GameManager:
@@ -248,33 +252,26 @@ class GameManager:
             return self.model_cache[key], path.name, None
 
         try:
-            model = MarjapussiNet()
-            state = torch.load(str(path), map_location="cpu")
-            if isinstance(state, dict) and "state_dict" in state and isinstance(state["state_dict"], dict):
-                state = state["state_dict"]
+            state, ckpt_meta, _ = parse_checkpoint(path, map_location="cpu")
+            family = str(ckpt_meta.get("model_family", "legacy"))
+            cfg_path = ckpt_meta.get("model_config_path")
+            try:
+                model, model_meta = create_model(model_family=family, model_config_path=cfg_path)
+            except Exception:
+                # Fallback to legacy if checkpoint metadata points to unavailable model config.
+                model, model_meta = create_model(model_family="legacy")
+                family = "legacy"
 
-            model_state = model.state_dict()
-            compatible = {}
-            skipped = 0
-            for k, v in state.items():
-                if k in model_state and hasattr(v, "shape") and model_state[k].shape == v.shape:
-                    compatible[k] = v
-                else:
-                    skipped += 1
-
-            if not compatible:
-                return None, path.name, (
-                    f"Incompatible checkpoint {path.name}: no matching tensor shapes for current model."
-                )
-
-            model.load_state_dict(compatible, strict=False)
+            loaded, skipped = load_state_compatible(model, state)
             model.eval()
+            setattr(model, "_checkpoint_metadata", ckpt_meta)
+            setattr(model, "_model_meta", model_meta)
             self.model_cache[key] = model
             warn = None
             if skipped > 0:
                 warn = (
                     f"Partially loaded {path.name}: "
-                    f"{len(compatible)} tensors loaded, {skipped} skipped (model/version mismatch)."
+                    f"{loaded} tensors loaded, {skipped} skipped (model/version mismatch)."
                 )
             return model, path.name, warn
         except Exception as e:
@@ -285,11 +282,13 @@ class GameManager:
         ctrl = self.controllers[seat]
         ctrl.checkpoint = resolved or checkpoint
         ctrl.error = err
+        ctrl.model_family = None
         if model is None:
             ctrl.mode = "heuristic"
             self.seat_models.pop(seat, None)
             return
         ctrl.mode = "model"
+        ctrl.model_family = getattr(model, "_model_meta", {}).get("model_family")
         self.seat_models[seat] = model
 
     def _effective_mode(self, seat: int) -> str:
@@ -308,6 +307,7 @@ class GameManager:
                 "mode": ctrl.mode,
                 "effective_mode": self._effective_mode(seat),
                 "checkpoint": ctrl.checkpoint,
+                "model_family": ctrl.model_family,
                 "error": ctrl.error,
             }
         return out
@@ -349,14 +349,17 @@ class GameManager:
             model, resolved, err = self._load_model(wanted)
             ctrl.checkpoint = resolved or wanted
             ctrl.error = err
+            ctrl.model_family = None
             if model is None:
                 self.seat_models.pop(seat, None)
             else:
+                ctrl.model_family = getattr(model, "_model_meta", {}).get("model_family")
                 self.seat_models[seat] = model
             return
 
         if mode in ("human", "heuristic"):
             ctrl.error = None
+            ctrl.model_family = None
         self.seat_models.pop(seat, None)
 
     def reload_model(self, seat: Optional[int], checkpoint: Optional[str] = None) -> None:
@@ -369,10 +372,12 @@ class GameManager:
             model, resolved, err = self._load_model(wanted, force=True)
             ctrl.checkpoint = resolved or wanted
             ctrl.error = err
+            ctrl.model_family = None
             if ctrl.mode == "model":
                 if model is None:
                     self.seat_models.pop(s, None)
                 else:
+                    ctrl.model_family = getattr(model, "_model_meta", {}).get("model_family")
                     self.seat_models[s] = model
 
     def _policy_preview(
@@ -608,6 +613,7 @@ class GameManager:
                 "controller": ctrl.mode,
                 "effective_controller": self._effective_mode(seat),
                 "checkpoint": ctrl.checkpoint,
+                "model_family": ctrl.model_family,
                 "error": ctrl.error,
                 "status": "idle",
             }

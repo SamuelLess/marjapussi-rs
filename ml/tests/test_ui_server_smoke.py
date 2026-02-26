@@ -54,6 +54,7 @@ class UiServerSmokeTest(unittest.TestCase):
         payload = gm.controller_payload()
         self.assertEqual(set(payload.keys()), {"0", "1", "2", "3"})
         self.assertEqual(payload["0"]["mode"], "human")
+        self.assertIn("model_family", payload["0"])
         gm.close()
 
     def test_state_contains_view_seat(self):

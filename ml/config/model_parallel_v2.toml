@@ -1,0 +1,33 @@
+# Parallel v2 model configuration.
+# Hard budget gate is enforced at model creation.
+
+max_params = 28000000
+
+# Core dimensions
+state_dim = 640
+belief_dim = 320
+history_dim = 320
+fusion_dim = 768
+action_emb_dim = 192
+phase_head_hidden = 384
+
+# Public-state tower
+card_emb_dim = 160
+opp_emb_dim = 192
+state_hidden_dim = 1024
+
+# Event-history tower
+history_layers = 10
+history_heads = 8
+history_ff_dim = 1280
+history_dropout = 0.10
+max_seq_len = 1024
+vocab_size = 250
+
+# Belief tower
+belief_seat_hidden = 256
+belief_hidden_dim = 512
+
+# Auxiliary heads
+aux_hidden_dim = 512
+aux_value_hidden_dim = 256

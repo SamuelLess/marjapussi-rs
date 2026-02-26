@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse, collections, json, math, os, random, sys, threading, time, warnings, uuid
 import ctypes
+from typing import Any
 
 try:
     import tomllib
@@ -44,8 +45,14 @@ import torch.optim as optim
 from torch.amp import GradScaler, autocast
 
 sys.path.insert(0, str(Path(__file__).parent))
-from model import ACTION_FEAT_DIM, MarjapussiNet
-from env import MarjapussiEnv, obs_to_tensors
+from model import ACTION_FEAT_DIM
+from env import MarjapussiEnv, SUPPORTED_OBS_SCHEMA_VERSION, obs_to_tensors
+from model_factory import (
+    build_checkpoint_payload,
+    create_model,
+    load_state_compatible,
+    parse_checkpoint,
+)
 
 DEFAULT_CKPT_DIR = Path(__file__).parent / "checkpoints"
 DEFAULT_RUNS_DIR = Path(__file__).parent / "runs"
@@ -125,7 +132,7 @@ def _is_info_action(legal: list[dict]) -> bool:
     return any(la.get("action_token") in (44, 45, 46, 47, 48, 49, 50) for la in legal)
 
 
-def atomic_torch_save(state_dict: dict, path: Path, retries: int = 5, delay_s: float = 0.05) -> None:
+def atomic_torch_save(payload: Any, path: Path, retries: int = 5, delay_s: float = 0.05) -> None:
     """
     Atomically publish checkpoints so readers never see partially-written files.
     Writes to a temp file in the same directory and then replaces target.
@@ -137,7 +144,7 @@ def atomic_torch_save(state_dict: dict, path: Path, retries: int = 5, delay_s: f
     last_err: Exception | None = None
     for _ in range(max(1, retries)):
         try:
-            torch.save(state_dict, tmp)
+            torch.save(payload, tmp)
             os.replace(tmp, path)
             return
         except Exception as e:
@@ -497,6 +504,9 @@ def train_online(
     lr: float           = 3e-4,
     device: str         = "cpu",
     checkpoint: str | None = None,
+    model_family: str = "legacy",
+    model_config: str | None = None,
+    strict_param_budget: int | None = None,
     eval_every: int     = 10,
     ppo_epochs: int     = 3,
     min_ppo_epochs: int = 2,
@@ -530,7 +540,12 @@ def train_online(
 ):
     configure_torch_runtime(device=device, workers=workers)
     use_amp = device.startswith("cuda")
-    model   = MarjapussiNet().to(device)
+    model, model_meta = create_model(
+        model_family=model_family,
+        model_config_path=model_config,
+        strict_param_budget=strict_param_budget,
+    )
+    model = model.to(device)
     scaler  = GradScaler("cuda", enabled=use_amp)
     opt     = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     sched   = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=rounds)
@@ -545,8 +560,16 @@ def train_online(
     runs_dir.mkdir(parents=True, exist_ok=True)
 
     if checkpoint and Path(checkpoint).exists():
-        model.load_state_dict(torch.load(checkpoint, map_location=device))
-        print(f"Loaded checkpoint: {checkpoint}")
+        state_dict, ckpt_meta, _ = parse_checkpoint(checkpoint, map_location=device)
+        loaded, skipped = load_state_compatible(model, state_dict)
+        ckpt_family = ckpt_meta.get("model_family")
+        if ckpt_family and ckpt_family != model_meta.get("model_family"):
+            Log.warn(
+                f"Checkpoint family mismatch: ckpt={ckpt_family}, requested={model_meta.get('model_family')}. "
+                f"Loaded compatible tensors only ({loaded} loaded, {skipped} skipped)."
+            )
+        else:
+            print(f"Loaded checkpoint: {checkpoint} ({loaded} tensors, {skipped} skipped)")
 
     named_ckpt_path: Path | None = None
     if named_checkpoint:
@@ -557,6 +580,11 @@ def train_online(
 
     Log.success(f"Online training | rounds={rounds} | games/round={games_per_round} "
                 f"| workers={workers} | MC-rollouts={mc_rollouts} | ppo_epochs={ppo_epochs} | device={device}")
+    Log.info(
+        f"Model family: {model_meta.get('model_family')} | "
+        f"config_hash={model_meta.get('model_config_hash')} | "
+        f"params={model.param_count():,}"
+    )
     Log.info(
         "Optimization control: "
         f"min_epochs={min_ppo_epochs}, base_epochs={ppo_epochs}, max_epochs={max_ppo_epochs}, "
@@ -608,7 +636,12 @@ def train_online(
         # ── Collect games in parallel via threads ────────────────────────────
         Log.phase(f"Round {rnd+1}/{rounds}: Simulation")
         print(f"\033[94m[SIM]\033[0m Starting simulation with {workers} workers...", flush=True)
-        sim_model = MarjapussiNet().to("cpu")
+        sim_model, _ = create_model(
+            model_family=model_meta.get("model_family", "legacy"),
+            model_config_path=model_meta.get("model_config_path"),
+            strict_param_budget=strict_param_budget,
+        )
+        sim_model = sim_model.to("cpu")
         sim_model.load_state_dict(model.state_dict())
         sim_model.eval()
         
@@ -820,22 +853,84 @@ def train_online(
             avg_diff = eval_metrics["avg_diff"]
             print(f"           -> Point diff (100 games): {avg_diff:+.1f}")
             log_entry["avg_diff"] = avg_diff
-            atomic_torch_save(model.state_dict(), ckpt_dir / f"online_round_{rnd+1}.pt")
+            atomic_torch_save(
+                build_checkpoint_payload(
+                    model,
+                    metadata={
+                        **model_meta,
+                        "schema_version": SUPPORTED_OBS_SCHEMA_VERSION,
+                        "action_encoding_version": 1,
+                        "action_feat_dim": ACTION_FEAT_DIM,
+                    },
+                    extra_metadata={
+                        "checkpoint_kind": "online_round",
+                        "round": rnd + 1,
+                        "avg_diff": avg_diff,
+                    },
+                ),
+                ckpt_dir / f"online_round_{rnd+1}.pt",
+            )
             if avg_diff > best_diff:
                 best_diff = avg_diff
-                atomic_torch_save(model.state_dict(), ckpt_dir / "best.pt")
+                atomic_torch_save(
+                    build_checkpoint_payload(
+                        model,
+                        metadata={
+                            **model_meta,
+                            "schema_version": SUPPORTED_OBS_SCHEMA_VERSION,
+                            "action_encoding_version": 1,
+                            "action_feat_dim": ACTION_FEAT_DIM,
+                        },
+                        extra_metadata={
+                            "checkpoint_kind": "best",
+                            "round": rnd + 1,
+                            "best_diff": best_diff,
+                        },
+                    ),
+                    ckpt_dir / "best.pt",
+                )
                 print(f"           -> New best: {best_diff:+.1f}")
                 
         # 50k games checkpoint (250 rounds * 200 games/round)
         if (rnd + 1) % 250 == 0:
             games_played = (rnd + 1) * games_per_round
             ckpt_name = f"model_{games_played // 1000}k.pt"
-            atomic_torch_save(model.state_dict(), ckpt_dir / ckpt_name)
+            atomic_torch_save(
+                build_checkpoint_payload(
+                    model,
+                    metadata={
+                        **model_meta,
+                        "schema_version": SUPPORTED_OBS_SCHEMA_VERSION,
+                        "action_encoding_version": 1,
+                        "action_feat_dim": ACTION_FEAT_DIM,
+                    },
+                    extra_metadata={
+                        "checkpoint_kind": "milestone",
+                        "round": rnd + 1,
+                        "games_played": games_played,
+                    },
+                ),
+                ckpt_dir / ckpt_name,
+            )
             Log.info(f"Saved 50k milestone checkpoint: {ckpt_name}")
 
-        atomic_torch_save(model.state_dict(), ckpt_dir / "latest.pt")
+        latest_payload = build_checkpoint_payload(
+            model,
+            metadata={
+                **model_meta,
+                "schema_version": SUPPORTED_OBS_SCHEMA_VERSION,
+                "action_encoding_version": 1,
+                "action_feat_dim": ACTION_FEAT_DIM,
+            },
+            extra_metadata={
+                "checkpoint_kind": "latest",
+                "round": rnd + 1,
+                "stage": stage,
+            },
+        )
+        atomic_torch_save(latest_payload, ckpt_dir / "latest.pt")
         if named_ckpt_path is not None:
-            atomic_torch_save(model.state_dict(), named_ckpt_path)
+            atomic_torch_save(latest_payload, named_ckpt_path)
         with open(log_path, "a") as f:
             f.write(json.dumps({"event": "update", **log_entry}) + "\n")
 
@@ -864,6 +959,12 @@ if __name__ == "__main__":
     p.add_argument("--train-batch",      type=int,   default=192,
                    help="Batch size for training optimization step")
     p.add_argument("--lr",               type=float, default=3e-4)
+    p.add_argument("--model-family",     choices=["legacy", "parallel_v2"], default="legacy",
+                   help="Model family for training/inference")
+    p.add_argument("--model-config",     default=None,
+                   help="Optional model config path (used by parallel_v2)")
+    p.add_argument("--strict-param-budget", type=int, default=None,
+                   help="Optional strict max-parameter gate")
     p.add_argument("--device",           default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--checkpoint",       default=None)
     p.add_argument("--start-round",      type=int,   default=0,
@@ -944,6 +1045,9 @@ if __name__ == "__main__":
         mc_rollouts=args.mc_rollouts,
         train_batch=args.train_batch,
         lr=args.lr,
+        model_family=args.model_family,
+        model_config=args.model_config,
+        strict_param_budget=args.strict_param_budget,
         device=args.device,
         checkpoint=args.checkpoint,
         start_round=args.start_round,
