@@ -33,7 +33,7 @@ max_pass_adv_calls_per_episode = 4
 max_info_adv_calls_per_episode = 2
 
 # --- Curriculum forcing windows ---
-force_passing_until_progress = 0.55
+force_passing_until_progress = 0.75
 force_bidding_until_progress = 0.90
 
 # --- Auxiliary and imitation losses ---
@@ -43,6 +43,8 @@ hidden_count_weight = 0.1
 hidden_known_weight = 0.5
 hidden_exclusive_weight = 0.5
 forced_imitation_weight = 0.5
+forced_imitation_bid_mult = 1.5
+forced_imitation_pass_mult = 2.5
 forced_imitation_decay_rounds = 128
 
 # --- Reward semantics ---

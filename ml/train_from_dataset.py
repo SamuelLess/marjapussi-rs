@@ -189,6 +189,7 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
           log_every: int = 500, amp: bool = True, max_steps: int = 0,
           bid_weight: float = 1.0, pass_weight: float = 1.0,
           outcome_weight_alpha: float = 0.0,
+          phase_balance_strength: float = 1.0,
           model_family: str = "legacy", model_config: str | None = None,
           strict_param_budget: int | None = None,
           lr_schedule: str = "plateau", lr_min: float = 1e-5,
@@ -214,6 +215,9 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
     )
     Log.info(
         f"Supervised target mode: pure BC + outcome_weight_alpha={outcome_weight_alpha:.2f}"
+    )
+    Log.info(
+        f"Phase balance: strength={phase_balance_strength:.2f} (0 disables per-batch phase balancing)"
     )
     Log.info(f"Model params: {model.param_count():,}")
     if ckpt and Path(ckpt).exists():
@@ -329,6 +333,30 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
                 phase_boost = batch_data.get("phase_boost")
                 if phase_boost is not None:
                     weights = weights * phase_boost.to(device, non_blocking=True)
+
+                # Optional batch-local phase balancing so bidding/passing are not
+                # drowned out by high-volume trick-play samples.
+                if phase_balance_strength > 0:
+                    chosen_feats = af[torch.arange(ai.shape[0], device=device), ai]
+                    is_play = chosen_feats[:, 0] > 0.5
+                    is_pass = (chosen_feats[:, 3] > 0.5) | (chosen_feats[:, 11] > 0.5)
+                    is_bid = (chosen_feats[:, 1] > 0.5) | (chosen_feats[:, 2] > 0.5)
+                    is_other = ~(is_play | is_pass | is_bid)
+                    groups = [is_play, is_pass, is_bid, is_other]
+                    active_groups = max(1, sum(int(g.any().item()) for g in groups))
+                    phase_factors = torch.ones_like(weights)
+                    total = max(1, int(weights.numel()))
+                    for g in groups:
+                        count = int(g.sum().item())
+                        if count > 0:
+                            factor = (total / float(count)) / float(active_groups)
+                            phase_factors[g] = factor
+                    phase_factors = torch.clamp(
+                        phase_factors.pow(float(phase_balance_strength)),
+                        min=0.25,
+                        max=4.0,
+                    )
+                    weights = weights * phase_factors
                 bc_loss = -(chosen_lp * weights).mean()
 
                 # Points regression (auxiliary)
@@ -439,6 +467,8 @@ if __name__ == "__main__":
                    help="Extra supervised emphasis multiplier for passing/pick-pass-card actions")
     p.add_argument("--outcome-weight-alpha", type=float, default=0.0,
                    help="Optional outcome-based weighting in BC (0.0 = pure imitation)")
+    p.add_argument("--phase-balance-strength", type=float, default=1.0,
+                   help="Batch-local phase balancing exponent (0.0 disables balancing)")
     p.add_argument("--lr-schedule", choices=["plateau", "cosine", "constant"], default="plateau",
                    help="Learning-rate control strategy")
     p.add_argument("--lr-min", type=float, default=1e-5,
@@ -473,6 +503,7 @@ if __name__ == "__main__":
           amp=not args.no_amp, max_steps=args.max_steps,
           bid_weight=args.bid_weight, pass_weight=args.pass_weight,
           outcome_weight_alpha=args.outcome_weight_alpha,
+          phase_balance_strength=args.phase_balance_strength,
           lr_schedule=args.lr_schedule, lr_min=args.lr_min,
           lr_warmup_steps=args.lr_warmup_steps,
           lr_plateau_patience=args.lr_plateau_patience,

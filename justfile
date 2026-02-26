@@ -93,7 +93,7 @@ f=open(p,'r',encoding='utf-8'); \
 [c.update([ (lambda r: (r['obs'].get('legal_actions',[{}])[min(max(0,int(r.get('action_taken',0))), max(0,len(r['obs'].get('legal_actions',[]))-1))].get('action_token') if r.get('obs',{}).get('legal_actions') else None))(json.loads(line)) ]) or (n:=n+1) for line in f if line.strip()]; \
 f.close(); \
 print(f'Dataset rows={n} pass_pick(token52)={c.get(52,0)} direct_pass(token43)={c.get(43,0)}'); \
-sys.exit(0 if c.get(52,0)>0 else 2)"
+sys.exit(0 if c.get(52,0)>0 and c.get(43,0)==0 else 2)"
 
 # Supervised pretraining on converted human data.
 pretrain-human data="ml/data/human_dataset.ndjson" epochs="8" max_steps="2048" checkpoints_dir="ml/checkpoints":

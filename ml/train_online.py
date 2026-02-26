@@ -530,6 +530,8 @@ def train_online(
     hidden_known_weight: float = 0.5,
     hidden_exclusive_weight: float = 0.5,
     forced_imitation_weight: float = 0.5,
+    forced_imitation_bid_mult: float = 1.5,
+    forced_imitation_pass_mult: float = 2.5,
     forced_imitation_decay_rounds: int = 128,
     named_checkpoint: str | None = None,
     points_normalizer: float = 420.0,
@@ -608,6 +610,7 @@ def train_online(
     )
     Log.info(
         f"Forced-action imitation: base_weight={forced_imitation_weight:.2f}, "
+        f"bid_mult={forced_imitation_bid_mult:.2f}, pass_mult={forced_imitation_pass_mult:.2f}, "
         f"decay_rounds={forced_imitation_decay_rounds}"
     )
     Log.info(
@@ -777,6 +780,8 @@ def train_online(
                         forced_imitation_weight
                         * max(0.0, 1.0 - (rnd / max(1, forced_imitation_decay_rounds))),
                     ),
+                    forced_imitation_bid_mult=forced_imitation_bid_mult,
+                    forced_imitation_pass_mult=forced_imitation_pass_mult,
                 )
                 if not math.isfinite(float(losses.get("total", float("nan")))):
                     invalid_batch_detected = True
@@ -1028,6 +1033,10 @@ if __name__ == "__main__":
                    help="Weight for per-card unique-seat assignment (set-theoretic exclusivity) loss")
     p.add_argument("--forced-imitation-weight", type=float, default=0.5,
                    help="Base weight for imitation loss on heuristic-forced actions")
+    p.add_argument("--forced-imitation-bid-mult", type=float, default=1.5,
+                   help="Extra multiplier for forced imitation on bidding actions")
+    p.add_argument("--forced-imitation-pass-mult", type=float, default=2.5,
+                   help="Extra multiplier for forced imitation on passing actions")
     p.add_argument("--forced-imitation-decay-rounds", type=int, default=128,
                    help="Rounds over which forced-action imitation weight decays")
     p.add_argument("--named-checkpoint", default=None,
@@ -1086,6 +1095,8 @@ if __name__ == "__main__":
         hidden_known_weight=args.hidden_known_weight,
         hidden_exclusive_weight=args.hidden_exclusive_weight,
         forced_imitation_weight=args.forced_imitation_weight,
+        forced_imitation_bid_mult=args.forced_imitation_bid_mult,
+        forced_imitation_pass_mult=args.forced_imitation_pass_mult,
         forced_imitation_decay_rounds=args.forced_imitation_decay_rounds,
         named_checkpoint=args.named_checkpoint,
         points_normalizer=args.points_normalizer,

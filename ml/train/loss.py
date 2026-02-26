@@ -79,6 +79,8 @@ def train_step(
     hidden_known_weight: float = 0.5,
     hidden_exclusive_weight: float = 0.5,
     forced_imitation_weight: float = 0.5,
+    forced_imitation_bid_mult: float = 1.0,
+    forced_imitation_pass_mult: float = 1.0,
 ) -> dict:
     model.train()
     with autocast(device_type='cuda', enabled=use_amp):
@@ -151,7 +153,15 @@ def train_step(
 
         forced_imitation_loss = torch.tensor(0.0, device=logits.device)
         if imitation_mask.any():
-            forced_imitation_loss = (-chosen_lp[imitation_mask]).mean()
+            imitation_sample_weight = torch.ones_like(chosen_lp)
+            if forced_imitation_bid_mult != 1.0:
+                imitation_sample_weight[is_bid] *= float(forced_imitation_bid_mult)
+            if forced_imitation_pass_mult != 1.0:
+                is_pass = (chosen_feats[:, 3] > 0.5) | (chosen_feats[:, 11] > 0.5)
+                imitation_sample_weight[is_pass] *= float(forced_imitation_pass_mult)
+            forced_imitation_loss = (
+                -chosen_lp[imitation_mask] * imitation_sample_weight[imitation_mask]
+            ).mean()
 
         policy_loss = ppo_loss + forced_imitation_weight * forced_imitation_loss
 
