@@ -52,6 +52,15 @@ class UiServerSmokeTest(unittest.TestCase):
         self.assertEqual(views["2"]["seat"], 2)
         gm.close()
 
+    def test_reload_model_keeps_checkpoint_choice(self):
+        gm = ui_server.GameManager(checkpoint=None)
+        gm.set_controller(1, "model", "definitely_missing_checkpoint_name")
+        gm.reload_model(1, "definitely_missing_checkpoint_name")
+        payload = gm.controller_payload()
+        self.assertIn("checkpoint", payload["1"])
+        self.assertTrue(payload["1"]["checkpoint"] in ("definitely_missing_checkpoint_name", None))
+        gm.close()
+
 
 if __name__ == "__main__":
     unittest.main()

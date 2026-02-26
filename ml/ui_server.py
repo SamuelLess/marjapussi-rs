@@ -146,7 +146,11 @@ class GameManager:
             names.insert(0, "latest.pt")
         return names
 
-    def _load_model(self, checkpoint: Optional[str]) -> tuple[Optional[Any], Optional[str], Optional[str]]:
+    def _load_model(
+        self,
+        checkpoint: Optional[str],
+        force: bool = False,
+    ) -> tuple[Optional[Any], Optional[str], Optional[str]]:
         if not TORCH_OK:
             return None, checkpoint, "PyTorch unavailable"
 
@@ -155,6 +159,8 @@ class GameManager:
             return None, checkpoint, f"Checkpoint not found: {checkpoint or 'latest.pt'}"
 
         key = str(path.resolve())
+        if force:
+            self.model_cache.pop(key, None)
         if key in self.model_cache:
             return self.model_cache[key], path.name, None
 
@@ -241,6 +247,22 @@ class GameManager:
         if mode in ("human", "heuristic"):
             ctrl.error = None
         self.seat_models.pop(seat, None)
+
+    def reload_model(self, seat: Optional[int], checkpoint: Optional[str] = None) -> None:
+        seats = range(4) if seat is None else [seat]
+        for s in seats:
+            if s < 0 or s > 3:
+                continue
+            ctrl = self.controllers[s]
+            wanted = checkpoint or ctrl.checkpoint or self.default_checkpoint
+            model, resolved, err = self._load_model(wanted, force=True)
+            ctrl.checkpoint = resolved or wanted
+            ctrl.error = err
+            if ctrl.mode == "model":
+                if model is None:
+                    self.seat_models.pop(s, None)
+                else:
+                    self.seat_models[s] = model
 
     def _policy_preview(
         self,
@@ -691,6 +713,10 @@ async def handle(ws: web.WebSocketResponse, cmd: dict[str, Any]) -> None:
         mode = str(cmd.get("mode", "heuristic"))
         checkpoint = cmd.get("checkpoint")
         game.set_controller(seat, mode, checkpoint)
+    elif act == "reload_model":
+        seat = cmd.get("seat")
+        checkpoint = cmd.get("checkpoint")
+        game.reload_model(None if seat is None else int(seat), checkpoint)
     elif act == "load_checkpoint":
         checkpoint = cmd.get("checkpoint")
         seat = cmd.get("seat")

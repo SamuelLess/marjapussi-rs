@@ -42,8 +42,8 @@ fn parse_args() -> (PathBuf, PathBuf, Option<usize>) {
         .arg(
             Arg::new("input")
                 .long("input")
-                .default_value("ml/dataset/games.json")
-                .help("Path to legacy JSON file (top-level list)."),
+                .default_value("ml/dataset/games.ndjson")
+                .help("Path to legacy dataset (.ndjson, JSON array, or {\"games\": [...]} object)."),
         )
         .arg(
             Arg::new("output")

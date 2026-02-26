@@ -51,6 +51,15 @@ from train.loss import train_step
 from train.reward import RewardConfig, contract_reward_from_pov, point_delta_reward, pov_team_points
 
 
+def _format_eta(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    if h > 0:
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"
+
+
 def configure_torch_runtime(device: str, workers: int) -> None:
     """Apply safe runtime settings for better training throughput."""
     torch.set_float32_matmul_precision("high")
@@ -545,13 +554,16 @@ def train_online(
     except: pass
 
     best_diff = -9999.0
+    train_start = time.time()
+    total_rounds = max(1, rounds - start_round)
 
     for rnd in range(start_round, rounds):
         t0 = time.time()
+        local_round = (rnd - start_round) + 1
         stage = 0 if rnd < 3 else 1   # first 3 rounds: heuristic bootstrap
 
         # ── Collect games in parallel via threads ────────────────────────────
-        Log.phase(f"Round {rnd+1}: Simulation")
+        Log.phase(f"Round {rnd+1}/{rounds}: Simulation")
         print(f"\033[94m[SIM]\033[0m Starting simulation with {workers} workers...", flush=True)
         sim_model = MarjapussiNet().to("cpu")
         sim_model.load_state_dict(model.state_dict())
@@ -608,7 +620,15 @@ def train_online(
                 if completed_games % 1 == 0 or completed_games == games_per_round:
                     elapsed = time.time() - t0
                     gps = completed_games / max(elapsed, 0.1)
-                    Log.sim(f"Round Progress: {completed_games}/{games_per_round} ({gps:.1f} games/s) | TargetTrick: {curriculum_trick}", end="")
+                    games_left = max(0, games_per_round - completed_games)
+                    eta_games = games_left / max(gps, 1e-6)
+                    Log.sim(
+                        f"Round {rnd+1}/{rounds} | "
+                        f"Progress: {completed_games}/{games_per_round} ({gps:.1f} games/s) | "
+                        f"ETA: {_format_eta(eta_games)} | "
+                        f"TargetTrick: {curriculum_trick}",
+                        end=""
+                    )
             return res
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -629,7 +649,7 @@ def train_online(
             continue
 
         # ── Train on collected batch ─────────────────────────────────────────
-        Log.phase(f"Round {rnd+1}: Optimization")
+        Log.phase(f"Round {rnd+1}/{rounds}: Optimization")
         model.train()
         t1 = time.time()
         loss_acc = collections.defaultdict(float)
@@ -727,7 +747,13 @@ def train_online(
         policy_label = "heuristic" if stage == 0 else f"model-v{rnd+1}"
         rate = games_per_round / gen_time
         Log.success(f"Round {rnd+1:3d} Summary:")
+        elapsed_run = time.time() - train_start
+        avg_round_time = elapsed_run / max(local_round, 1)
+        rounds_left = max(0, total_rounds - local_round)
+        eta_run = avg_round_time * rounds_left
         print(f"  - Policy:   {policy_label}")
+        print(f"  - Round:    {rnd+1}/{rounds} (local {local_round}/{total_rounds})")
+        print(f"  - RunETA:   {_format_eta(eta_run)} remaining (elapsed {_format_eta(elapsed_run)})")
         print(f"  - Games:    {games_per_round} ({rate:.1f} games/s)")
         print(f"  - Samples:  {n_trans} transitions")
         print(f"  - OptEpochs:{epoch}")

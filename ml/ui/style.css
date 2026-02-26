@@ -172,6 +172,11 @@ body {
   border-color: var(--blue)
 }
 
+.tob:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* Dot */
 .dot {
   width: 10px;
@@ -701,6 +706,12 @@ body {
   background: var(--bg3);
   color: var(--tx);
   font: 500 11px var(--font);
+}
+
+.ctrl-actions {
+  margin-top: 4px;
+  display: flex;
+  gap: 4px;
 }
 
 .ai-meta {

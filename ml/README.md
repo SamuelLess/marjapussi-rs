@@ -452,7 +452,7 @@ All strategies should use the same evaluation harness so results remain comparab
 
 ### 6.2 Human Dataset Pretraining
 
-**Data source**: Recorded human games (for example `ml/dataset/games.json` converted to decision-point NDJSON).
+**Data source**: Recorded human games (for example `ml/dataset/games.ndjson` converted to decision-point NDJSON).
 
 **Objectives**: next-move prediction, masked card prediction, team points regression.
 

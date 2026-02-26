@@ -56,7 +56,7 @@ ensure-ml-convert-release:
     fi
 
 # Convert legacy human games into decision-point NDJSON.
-build-human-dataset input="ml/dataset/games.json" output="ml/data/human_dataset.ndjson": ensure-ml-server-release ensure-ml-convert-release
+build-human-dataset input="ml/dataset/games.ndjson" output="ml/data/human_dataset.ndjson": ensure-ml-server-release ensure-ml-convert-release
     {{ml_convert_bin}} --input {{input}} --output {{output}}
 
 # Supervised pretraining on converted human data.

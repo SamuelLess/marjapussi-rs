@@ -39,6 +39,7 @@ let hs = new Set();   // human-controlled seats
 let seatViews = {};   // per-seat observations for human-controlled seats
 let controllers = {}; // per-seat controller config from server
 let checkpointOptions = [];
+let pendingSeatCheckpoint = {};
 let torchOk = true;
 let auto = false;
 let autoTm = null;
@@ -82,6 +83,10 @@ function connect() {
         checkpointOptions = gs?.checkpoints || checkpointOptions;
         torchOk = gs?.torch_ok !== false;
         hs = new Set(gs?.human_seats || []);
+        Object.keys(controllers).forEach(k => {
+          const cp = controllers[k]?.checkpoint;
+          if (cp != null && pendingSeatCheckpoint[k] === cp) delete pendingSeatCheckpoint[k];
+        });
         render();
         if (debugMode) send({ cmd: 'debug_state' });
         break;
@@ -886,7 +891,7 @@ function renderAI(obs) {
     const mode = ctrl.mode || inf.controller || 'heuristic';
     const effMode = ctrl.effective_mode || inf.effective_controller || mode;
     const isH = effMode === 'human';
-    const cp = ctrl.checkpoint || inf.checkpoint || 'latest.pt';
+    const cp = pendingSeatCheckpoint[String(s)] || ctrl.checkpoint || inf.checkpoint || 'latest.pt';
     const status = inf.status || '';
     const err = inf.error || '';
     const hidden = inf.hidden_summary || {};
@@ -910,10 +915,15 @@ function renderAI(obs) {
       `</select>` +
       `<select class="ctrl-ckpt" data-seat="${s}" ${mode === 'model' ? '' : 'disabled'}></select>` +
       `</div>` +
+      `<div class="ctrl-actions">` +
+      `<button class="tob reload-model" data-seat="${s}" ${mode === 'model' ? '' : 'disabled'}>Reload</button>` +
+      `<button class="tob refresh-ckpt" data-seat="${s}">Refresh</button>` +
+      `</div>` +
       `<div class="ai-meta">${status || effMode}${err ? ` | ${err}` : ''}</div>`;
 
     const ckSel = d.querySelector('.ctrl-ckpt');
     const ckList = checkpointOptions.length ? checkpointOptions : ['latest.pt'];
+    if (!ckList.includes(cp)) ckList.unshift(cp);
     ckList.forEach(name => {
       const op = document.createElement('option');
       op.value = name;
@@ -931,10 +941,16 @@ function renderAI(obs) {
     d.querySelector('.ctrl-ckpt')?.addEventListener('change', ev => {
       const seat = +ev.target.dataset.seat;
       const ckpt = ev.target.value;
-      const modeEl = d.querySelector('.ctrl-mode');
-      if (modeEl?.value === 'model') {
-        send({ cmd: 'set_controller', seat, mode: 'model', checkpoint: ckpt });
-      }
+      pendingSeatCheckpoint[String(seat)] = ckpt;
+    });
+    d.querySelector('.reload-model')?.addEventListener('click', ev => {
+      const seat = +ev.target.dataset.seat;
+      const ckpt = d.querySelector('.ctrl-ckpt')?.value || 'latest.pt';
+      send({ cmd: 'reload_model', seat, checkpoint: ckpt });
+      evLog('↻', `P${seat} Modell neu geladen: <b>${ckpt}</b>`);
+    });
+    d.querySelector('.refresh-ckpt')?.addEventListener('click', () => {
+      send({ cmd: 'list_checkpoints' });
     });
 
     // Top-4 action probabilities with chosen-action highlight if available
