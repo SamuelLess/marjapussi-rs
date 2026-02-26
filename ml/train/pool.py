@@ -97,10 +97,10 @@ class BatchInferenceServer:
 
 class EnvPool:
     """Pool of persistent MarjapussiEnv instances."""
-    def __init__(self, size: int):
+    def __init__(self, size: int, include_labels: bool = False):
         self.envs = queue.Queue()
         for _ in range(size):
-            self.envs.put(MarjapussiEnv())
+            self.envs.put(MarjapussiEnv(include_labels=include_labels))
 
     def get(self) -> MarjapussiEnv:
         return self.envs.get()

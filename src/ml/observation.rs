@@ -1,12 +1,10 @@
-use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
-
 use crate::game::cards::{get_all_cards, Card, Suit, Value};
 use crate::game::gameevent::{ActionType, AnswerType, GameCallback, QuestionType};
 use crate::game::player::PlaceAtTable;
 use crate::game::Game;
+use crate::ml::inference::{
+    apply_hidden_set_constraints, hidden_set_constraints_enabled, HalfConstraint,
+};
 
 // ─── Card index helpers ─────────────────────────────────────────────────────
 
@@ -97,6 +95,8 @@ pub struct Observation {
     pub event_tokens: Vec<u32>,
     /// Legal actions as (action_type_id, card_idx_or_0, suit_idx_or_0).
     pub legal_actions: Vec<LegalActionObs>,
+    /// Debug-friendly phase string (for UI/runtime controls).
+    pub phase: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -173,188 +173,6 @@ pub fn suit_index(suit: Suit) -> usize {
 
 pub fn bid_token(value: i32) -> u32 {
     tokens::BID_BASE + ((value - 120) / 5) as u32
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HalfConstraint {
-    Unknown,
-    RequireAtLeastOne,
-    RequireBoth,
-}
-
-type HiddenSetOutput = ([[bool; 36]; 3], [[bool; 36]; 3]);
-
-fn hidden_set_cache() -> &'static Mutex<HashMap<u64, HiddenSetOutput>> {
-    static CACHE: OnceLock<Mutex<HashMap<u64, HiddenSetOutput>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-static ENABLE_HIDDEN_SET_CONSTRAINTS: AtomicBool = AtomicBool::new(true);
-
-fn hidden_set_constraints_enabled() -> bool {
-    ENABLE_HIDDEN_SET_CONSTRAINTS.load(Ordering::Relaxed)
-}
-
-#[cfg(test)]
-fn set_hidden_set_constraints_enabled(enabled: bool) -> bool {
-    ENABLE_HIDDEN_SET_CONSTRAINTS.swap(enabled, Ordering::Relaxed)
-}
-
-fn hash_hidden_set_input(
-    possible_bitmasks: &[[bool; 36]; 3],
-    confirmed_bitmasks: &[[bool; 36]; 3],
-    half_constraints: &[[HalfConstraint; 4]; 3],
-) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for seat in 0..3 {
-        for card in 0..36 {
-            possible_bitmasks[seat][card].hash(&mut hasher);
-            confirmed_bitmasks[seat][card].hash(&mut hasher);
-        }
-    }
-    for seat in 0..3 {
-        for suit in 0..4 {
-            match half_constraints[seat][suit] {
-                HalfConstraint::Unknown => 0u8,
-                HalfConstraint::RequireAtLeastOne => 1u8,
-                HalfConstraint::RequireBoth => 2u8,
-            }
-            .hash(&mut hasher);
-        }
-    }
-    hasher.finish()
-}
-
-fn enforce_hidden_set_constraints(
-    possible_bitmasks: &mut [[bool; 36]; 3],
-    confirmed_bitmasks: &mut [[bool; 36]; 3],
-    half_constraints: &[[HalfConstraint; 4]; 3],
-) {
-    let key = hash_hidden_set_input(
-        possible_bitmasks,
-        confirmed_bitmasks,
-        half_constraints,
-    );
-    if let Ok(cache) = hidden_set_cache().lock() {
-        if let Some((cached_possible, cached_confirmed)) = cache.get(&key) {
-            *possible_bitmasks = *cached_possible;
-            *confirmed_bitmasks = *cached_confirmed;
-            return;
-        }
-    }
-
-    const MAX_ITERS: usize = 16;
-
-    for _ in 0..MAX_ITERS {
-        let mut changed = false;
-
-        // Enforce uniqueness for already confirmed cards.
-        for card in 0..36 {
-            let mut owner: Option<usize> = None;
-            for seat in 0..3 {
-                if confirmed_bitmasks[seat][card] {
-                    if !possible_bitmasks[seat][card] {
-                        confirmed_bitmasks[seat][card] = false;
-                        changed = true;
-                        continue;
-                    }
-                    if owner.is_none() {
-                        owner = Some(seat);
-                    } else {
-                        confirmed_bitmasks[seat][card] = false;
-                        changed = true;
-                    }
-                }
-            }
-            if let Some(owner_seat) = owner {
-                for seat in 0..3 {
-                    if seat != owner_seat {
-                        if confirmed_bitmasks[seat][card] {
-                            confirmed_bitmasks[seat][card] = false;
-                            changed = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Apply Q&A half constraints (per seat and suit).
-        for seat in 0..3 {
-            for suit in 0..4 {
-                let ober_idx = suit * 9 + 5;
-                let king_idx = suit * 9 + 6;
-                match half_constraints[seat][suit] {
-                    HalfConstraint::RequireBoth => {
-                        if !possible_bitmasks[seat][ober_idx] {
-                            possible_bitmasks[seat][ober_idx] = true;
-                            changed = true;
-                        }
-                        if !possible_bitmasks[seat][king_idx] {
-                            possible_bitmasks[seat][king_idx] = true;
-                            changed = true;
-                        }
-                        if !confirmed_bitmasks[seat][ober_idx] {
-                            confirmed_bitmasks[seat][ober_idx] = true;
-                            changed = true;
-                        }
-                        if !confirmed_bitmasks[seat][king_idx] {
-                            confirmed_bitmasks[seat][king_idx] = true;
-                            changed = true;
-                        }
-                    }
-                    HalfConstraint::RequireAtLeastOne => {
-                        let ober_possible = possible_bitmasks[seat][ober_idx];
-                        let king_possible = possible_bitmasks[seat][king_idx];
-                        if !ober_possible && king_possible && !confirmed_bitmasks[seat][king_idx] {
-                            confirmed_bitmasks[seat][king_idx] = true;
-                            changed = true;
-                        }
-                        if !king_possible && ober_possible && !confirmed_bitmasks[seat][ober_idx] {
-                            confirmed_bitmasks[seat][ober_idx] = true;
-                            changed = true;
-                        }
-                    }
-                    HalfConstraint::Unknown => {}
-                }
-            }
-        }
-
-        if !changed {
-            break;
-        }
-    }
-
-    // Final consistency pass: confirmed implies possible and uniqueness.
-    for card in 0..36 {
-        let mut owner: Option<usize> = None;
-        for seat in 0..3 {
-            if confirmed_bitmasks[seat][card] {
-                if !possible_bitmasks[seat][card] {
-                    confirmed_bitmasks[seat][card] = false;
-                    continue;
-                }
-                if owner.is_none() {
-                    owner = Some(seat);
-                } else {
-                    confirmed_bitmasks[seat][card] = false;
-                }
-            }
-        }
-        if let Some(owner_seat) = owner {
-            for seat in 0..3 {
-                if seat != owner_seat {
-                    confirmed_bitmasks[seat][card] = false;
-                }
-            }
-        }
-    }
-
-    if let Ok(mut cache) = hidden_set_cache().lock() {
-        if cache.len() > 2048 {
-            cache.clear();
-        }
-        cache.insert(key, (*possible_bitmasks, *confirmed_bitmasks));
-    }
 }
 
 // ─── Main observation builder ─────────────────────────────────────────────────
@@ -600,7 +418,7 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
         state.player_at_place(pov.prev()).cards.len(),
     ];
     if hidden_set_constraints_enabled() {
-        enforce_hidden_set_constraints(
+        apply_hidden_set_constraints(
             &mut possible_bitmasks,
             &mut confirmed_bitmasks,
             &half_constraints,
@@ -649,6 +467,7 @@ pub fn build_observation(game: &Game, pov: PlaceAtTable) -> Observation {
         last_trick_bonus_live: trick_number <= 9,
         event_tokens,
         legal_actions,
+        phase: format!("{:?}", state.phase),
     }
 }
 
@@ -917,14 +736,16 @@ fn build_legal_actions(game: &Game, pov: &PlaceAtTable) -> Vec<LegalActionObs> {
 
 use serde::{Deserialize, Serialize};
 
+pub const OBS_SCHEMA_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObservationJson {
+    pub schema_version: u32,
     pub played_bitmask: Vec<bool>,
     pub my_hand_bitmask: Vec<bool>,
     pub possible_bitmasks: Vec<Vec<bool>>,
     pub confirmed_bitmasks: Vec<Vec<bool>>,
     pub my_hand_indices: Vec<usize>,
-    pub all_hands: Vec<Vec<usize>>,
     pub current_trick_indices: Vec<usize>,
     pub current_trick_players: Vec<usize>,
     pub trump: Option<usize>,
@@ -940,19 +761,33 @@ pub struct ObservationJson {
     pub last_trick_bonus_live: bool,
     pub event_tokens: Vec<u32>,
     pub legal_actions: Vec<LegalActionObs>,
+    pub phase: String,
 }
 
-impl From<Observation> for ObservationJson {
-    fn from(o: Observation) -> Self {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservationDebugJson {
+    pub schema_version: u32,
+    pub all_hands: Vec<Vec<usize>>,
+    pub phase: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservationTrainLabelsJson {
+    /// Relative hidden seats only (left, partner, right).
+    pub hidden_hands: Vec<Vec<usize>>,
+}
+
+impl From<&Observation> for ObservationJson {
+    fn from(o: &Observation) -> Self {
         ObservationJson {
+            schema_version: OBS_SCHEMA_VERSION,
             played_bitmask: o.played_bitmask.to_vec(),
             my_hand_bitmask: o.my_hand_bitmask.to_vec(),
             possible_bitmasks: o.possible_bitmasks.iter().map(|b| b.to_vec()).collect(),
             confirmed_bitmasks: o.confirmed_bitmasks.iter().map(|b| b.to_vec()).collect(),
-            my_hand_indices: o.my_hand_indices,
-            all_hands: o.all_hands,
-            current_trick_indices: o.current_trick_indices,
-            current_trick_players: o.current_trick_players,
+            my_hand_indices: o.my_hand_indices.clone(),
+            current_trick_indices: o.current_trick_indices.clone(),
+            current_trick_players: o.current_trick_players.clone(),
             trump: o.trump,
             trump_announced: o.trump_announced.to_vec(),
             my_role: o.my_role,
@@ -964,9 +799,46 @@ impl From<Observation> for ObservationJson {
             cards_remaining: o.cards_remaining.to_vec(),
             trump_possibilities: o.trump_possibilities,
             last_trick_bonus_live: o.last_trick_bonus_live,
-            event_tokens: o.event_tokens,
-            legal_actions: o.legal_actions,
+            event_tokens: o.event_tokens.clone(),
+            legal_actions: o.legal_actions.clone(),
+            phase: o.phase.clone(),
         }
+    }
+}
+
+impl From<Observation> for ObservationJson {
+    fn from(o: Observation) -> Self {
+        ObservationJson::from(&o)
+    }
+}
+
+impl From<&Observation> for ObservationDebugJson {
+    fn from(o: &Observation) -> Self {
+        ObservationDebugJson {
+            schema_version: OBS_SCHEMA_VERSION,
+            all_hands: o.all_hands.clone(),
+            phase: o.phase.clone(),
+        }
+    }
+}
+
+impl From<Observation> for ObservationDebugJson {
+    fn from(o: Observation) -> Self {
+        ObservationDebugJson::from(&o)
+    }
+}
+
+impl From<&Observation> for ObservationTrainLabelsJson {
+    fn from(o: &Observation) -> Self {
+        ObservationTrainLabelsJson {
+            hidden_hands: o.all_hands.iter().skip(1).cloned().collect(),
+        }
+    }
+}
+
+impl From<Observation> for ObservationTrainLabelsJson {
+    fn from(o: Observation) -> Self {
+        ObservationTrainLabelsJson::from(&o)
     }
 }
 
@@ -975,6 +847,7 @@ mod tests {
     use super::*;
     use crate::game::Game;
     use crate::game::player::PlaceAtTable;
+    use crate::ml::inference::set_hidden_set_constraints_enabled;
     use rand::prelude::IndexedRandom;
     use std::sync::{Mutex, OnceLock};
 
@@ -999,38 +872,6 @@ mod tests {
         for (i, card) in get_all_cards().iter().enumerate() {
             assert_eq!(card_index(card), i);
         }
-    }
-
-    #[test]
-    fn test_set_constraints_single_candidate_stays_unique_possible() {
-        let mut possible = [[false; 36]; 3];
-        let mut confirmed = [[false; 36]; 3];
-        let half = [[HalfConstraint::Unknown; 4]; 3];
-
-        possible[2][7] = true;
-        enforce_hidden_set_constraints(&mut possible, &mut confirmed, &half);
-
-        assert!(!confirmed[2][7]);
-        assert!(!possible[0][7]);
-        assert!(!possible[1][7]);
-        assert!(possible[2][7]);
-    }
-
-    #[test]
-    fn test_set_constraints_yes_half_forces_other_card() {
-        let mut possible = [[true; 36]; 3];
-        let mut confirmed = [[false; 36]; 3];
-        let mut half = [[HalfConstraint::Unknown; 4]; 3];
-
-        // Seat 0 said YesHalf(Green), but Ober(Green) is impossible -> King(Green) must be true.
-        half[0][0] = HalfConstraint::RequireAtLeastOne;
-        let green_ober = 5; // suit 0 * 9 + Ober index 5
-        let green_king = 6; // suit 0 * 9 + King index 6
-        possible[0][green_ober] = false;
-        possible[0][green_king] = true;
-
-        enforce_hidden_set_constraints(&mut possible, &mut confirmed, &half);
-        assert!(confirmed[0][green_king]);
     }
 
     fn test_lock() -> &'static Mutex<()> {

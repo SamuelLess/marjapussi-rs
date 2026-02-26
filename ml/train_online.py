@@ -169,7 +169,7 @@ def run_episode(
             action_pos = 0
 
             if controls_turn:
-                t_before = obs_to_tensors(obs)
+                t_before = obs_to_tensors(obs, env.labels)
                 model_action_pos, val_pred, model_log_prob = inference_server.infer(t_before)
                 force_heuristic_turn = (
                     stage == 0
@@ -394,7 +394,7 @@ def collate(transitions: list[Transition], device: str):
 def eval_deterministic(model, device, n=100) -> dict:
     model.eval()
     server = BatchInferenceServer(model, device, max_batch=1, greedy=True) # Serial deterministic eval
-    env = MarjapussiEnv()
+    env = MarjapussiEnv(include_labels=False)
     
     total_pts_diff = 0.0
     valid_games = 0
@@ -513,7 +513,7 @@ def train_online(
         sim_model.eval()
         
         server = BatchInferenceServer(sim_model, "cpu", max_batch=min(workers * 4, 128))
-        pool_envs = EnvPool(workers)
+        pool_envs = EnvPool(workers, include_labels=True)
         all_transitions: list[Transition] = []
 
         # Curriculum logic

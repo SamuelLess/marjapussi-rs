@@ -96,8 +96,15 @@ class GameManager:
         result = {"hands": {}, "tricks": []}
         if self.obs is None:
             return result
-        # All hands (now reliably provided by Rust in the obs JSON)
-        hands = self.obs.get("all_hands", [])
+        debug_obs = {}
+        if self.env is not None:
+            try:
+                debug_obs = self.env.observe_debug()
+            except Exception:
+                debug_obs = {}
+
+        # All hands come from debug-only endpoint to avoid ML payload leaks.
+        hands = debug_obs.get("all_hands", [])
         if hands:
             result["hands"] = {str(i): hand for i, hand in enumerate(hands)}
         # Completed tricks from outcome info
@@ -132,7 +139,7 @@ class GameManager:
 
         true_possible_violations = 0
         wrong_confirmed = 0
-        all_hands = self.obs.get("all_hands", [])
+        all_hands = hands
         for rel_opp in range(3):
             seat_idx = rel_opp + 1
             truth = set(all_hands[seat_idx]) if seat_idx < len(all_hands) else set()

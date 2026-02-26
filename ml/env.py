@@ -74,11 +74,18 @@ class MarjapussiEnv:
     Manages one game instance via the Rust ml_server subprocess.
     """
 
-    def __init__(self, pov: int = 0, binary_path: Optional[str | Path] = None):
+    def __init__(
+        self,
+        pov: int = 0,
+        binary_path: Optional[str | Path] = None,
+        include_labels: bool = False,
+    ):
         self.pov = pov
         self.proc: Optional[subprocess.Popen] = None
         self._obs: Optional[dict] = None
+        self._labels: Optional[dict] = None
         self._done = False
+        self.include_labels = include_labels
         self.binary_path = resolve_ml_server_binary(binary_path)
         self._start_proc()
 
@@ -100,7 +107,11 @@ class MarjapussiEnv:
     def reset(self, pov: Optional[int] = None, start_trick: Optional[int] = None, seed: Optional[int] = None) -> dict:
         if pov is not None:
             self.pov = pov
-        cmd = {"cmd": "new_game", "pov": self.pov}
+        cmd = {
+            "cmd": "new_game",
+            "pov": self.pov,
+            "include_labels": self.include_labels,
+        }
         if start_trick is not None:
             cmd["start_trick"] = start_trick
         if seed is not None:
@@ -109,6 +120,7 @@ class MarjapussiEnv:
         if resp.get("type") == "error":
             raise RuntimeError(resp["message"])
         self._obs = resp["obs"]
+        self._labels = resp.get("labels")
         self._done = resp.get("done", False)
         return self._obs
 
@@ -118,6 +130,7 @@ class MarjapussiEnv:
         if resp.get("type") == "error":
             raise RuntimeError(resp["message"])
         self._obs = resp["obs"]
+        self._labels = resp.get("labels")
         self._done = resp.get("done", False)
         info = resp.get("outcome") or {}
         return self._obs, self._done, info
@@ -135,13 +148,21 @@ class MarjapussiEnv:
         if resp.get("type") == "error":
             raise RuntimeError(resp["message"])
         self._obs = resp["obs"]
+        self._labels = resp.get("labels")
         self._done = resp.get("done", False)
         info = resp.get("outcome") or {}
         return self._obs, self._done, info
 
     def observe(self) -> dict:
         resp = _send(self.proc, {"cmd": "observe"})
+        self._labels = resp.get("labels")
         return resp["obs"]
+
+    def observe_debug(self) -> dict:
+        resp = _send(self.proc, {"cmd": "observe_debug"})
+        if resp.get("type") == "error":
+            raise RuntimeError(resp["message"])
+        return resp.get("debug", {})
 
     def run_to_end(self, policy: str = "heuristic") -> dict:
         resp = _send(self.proc, {"cmd": "run_to_end", "policy": policy})
@@ -164,6 +185,10 @@ class MarjapussiEnv:
         return self._done
 
     @property
+    def labels(self) -> Optional[dict]:
+        return self._labels
+
+    @property
     def legal_actions(self) -> list[dict]:
         if self._obs is None:
             return []
@@ -180,7 +205,7 @@ class MarjapussiEnv:
 
 # ── Observation → Tensor conversion ───────────────────────────────────────────
 
-def obs_to_tensors(obs: dict) -> dict:
+def obs_to_tensors(obs: dict, labels: Optional[dict] = None) -> dict:
     """Convert a single raw observation dict to model-ready tensors (batch dim=1)."""
 
     def bitmask(key):
@@ -244,13 +269,21 @@ def obs_to_tensors(obs: dict) -> dict:
 
     # Hidden-hand supervision targets (relative opponents: left, partner, right).
     hidden_target = torch.zeros((1, 3, NUM_CARDS), dtype=torch.float32)
-    all_hands = obs.get('all_hands', [])
-    for rel_opp in range(3):
-        seat_idx = rel_opp + 1  # 0 is POV, 1..3 are opponents in relative seating
-        if seat_idx < len(all_hands):
-            for card_idx in all_hands[seat_idx]:
+    hidden_hands = (labels or {}).get("hidden_hands", [])
+    if hidden_hands:
+        for rel_opp in range(min(3, len(hidden_hands))):
+            for card_idx in hidden_hands[rel_opp]:
                 if 0 <= card_idx < NUM_CARDS:
                     hidden_target[0, rel_opp, card_idx] = 1.0
+    else:
+        # Backward compatibility for legacy/offline records that still include all_hands.
+        all_hands = obs.get('all_hands', [])
+        for rel_opp in range(3):
+            seat_idx = rel_opp + 1
+            if seat_idx < len(all_hands):
+                for card_idx in all_hands[seat_idx]:
+                    if 0 <= card_idx < NUM_CARDS:
+                        hidden_target[0, rel_opp, card_idx] = 1.0
 
     hidden_possible = torch.tensor(
         obs.get('possible_bitmasks', [[False] * NUM_CARDS for _ in range(3)]),

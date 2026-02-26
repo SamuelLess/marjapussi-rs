@@ -269,8 +269,9 @@ function renderHand(s, obs) {
   }
 
   // Hands rendering mode
-  // We use `obs.my_hand_indices` for P0, and `obs.all_hands[s]` for others in debug mode.
-  const faceUpCards = (s === 0) ? obs.my_hand_indices : (debugMode ? obs.all_hands?.[s] : null);
+  // P0 uses observation hand, hidden seats use debug-only hands from debug_state.
+  const debugHand = allHands[s] || allHands[String(s)] || null;
+  const faceUpCards = (s === 0) ? obs.my_hand_indices : (debugMode ? debugHand : null);
 
   if (faceUpCards?.length) {
     const newKey = [...faceUpCards].sort((a, b) => a - b).join(',');

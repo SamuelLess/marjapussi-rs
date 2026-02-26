@@ -5,7 +5,9 @@ use crate::game::gamestate::GamePhase;
 use crate::game::player::PlaceAtTable;
 use crate::game::Game;
 use crate::game::gameevent::ActionType;
-use crate::ml::observation::{build_observation, ObservationJson};
+use crate::ml::observation::{
+    build_observation, ObservationDebugJson, ObservationJson, ObservationTrainLabelsJson,
+};
 use crate::ml::sim::{heuristic_policy, random_policy, run_to_end, try_all_actions};
 use crate::ml::search::TtEntry;
 use std::collections::HashMap;
@@ -25,6 +27,9 @@ pub enum Request {
         /// Optional: fast forward to a specific trick number (1..9). 0 = Passing, -1 = Bidding.
         #[serde(default)]
         start_trick: Option<i32>,
+        /// Include supervised-only labels (hidden opponent hands) as a separate payload.
+        #[serde(default)]
+        include_labels: bool,
     },
     /// Advance the game with the given action index (into legal_actions).
     Step { action_idx: usize },
@@ -34,6 +39,8 @@ pub enum Request {
     },
     /// Return current observation without advancing.
     Observe,
+    /// Return debug-only payload (omniscient state for tooling/UI).
+    ObserveDebug,
     /// Request the heuristic policy's preferred action.
     GetHeuristicAction,
     /// Run current game to end using the specified policy.
@@ -74,7 +81,12 @@ pub enum Response {
         obs: ObservationJson,
         done: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
+        labels: Option<ObservationTrainLabelsJson>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         outcome: Option<OutcomeJson>,
+    },
+    DebugObs {
+        debug: ObservationDebugJson,
     },
     Done {
         outcome: OutcomeJson,
@@ -140,6 +152,7 @@ fn info_to_outcome(info: &GameFinishedInfo) -> OutcomeJson {
 pub struct Server {
     game: Option<Game>,
     pov: PlaceAtTable,
+    include_labels: bool,
     cache: HashMap<u128, TtEntry>,
 }
 
@@ -148,14 +161,16 @@ impl Server {
         Server { 
             game: None, 
             pov: PlaceAtTable(0),
+            include_labels: false,
             cache: HashMap::with_capacity(8192),
         }
     }
 
     pub fn handle(&mut self, req: Request) -> Response {
         match req {
-            Request::NewGame { seed, pov, start_trick } => {
+            Request::NewGame { seed, pov, start_trick, include_labels } => {
                 self.pov = PlaceAtTable(pov);
+                self.include_labels = include_labels;
                 let names = ["P0", "P1", "P2", "P3"].map(|s| s.to_string());
                 
                 let cards = if let Some(s) = seed {
@@ -224,9 +239,15 @@ impl Server {
                 }
 
                 let done = game.ended();
-                let obs = ObservationJson::from(build_observation(&game, self.pov.clone()));
+                let obs_full = build_observation(&game, self.pov.clone());
+                let obs = ObservationJson::from(&obs_full);
+                let labels = if self.include_labels {
+                    Some(ObservationTrainLabelsJson::from(&obs_full))
+                } else {
+                    None
+                };
                 self.game = Some(game);
-                Response::Obs { obs, done, outcome: None }
+                Response::Obs { obs, done, labels, outcome: None }
             }
 
             Request::Step { action_idx } => {
@@ -245,14 +266,20 @@ impl Server {
                     Err(e) => return Response::Error { message: format!("{:?}", e) },
                 };
                 let done = next.ended();
-                let obs = ObservationJson::from(build_observation(&next, self.pov.clone()));
+                let obs_full = build_observation(&next, self.pov.clone());
+                let obs = ObservationJson::from(&obs_full);
+                let labels = if self.include_labels {
+                    Some(ObservationTrainLabelsJson::from(&obs_full))
+                } else {
+                    None
+                };
                 let outcome = if done {
                     Some(info_to_outcome(&GameFinishedInfo::from(next.clone())))
                 } else {
                     None
                 };
                 self.game = Some(next);
-                Response::Obs { obs, done, outcome }
+                Response::Obs { obs, done, labels, outcome }
             }
 
             Request::DebugPass { card_indices } => {
@@ -290,14 +317,20 @@ impl Server {
                         Err(e) => return Response::Error { message: format!("{:?}", e) },
                     };
                     let done = next.ended();
-                    let obs = ObservationJson::from(build_observation(&next, self.pov.clone()));
+                    let obs_full = build_observation(&next, self.pov.clone());
+                    let obs = ObservationJson::from(&obs_full);
+                    let labels = if self.include_labels {
+                        Some(ObservationTrainLabelsJson::from(&obs_full))
+                    } else {
+                        None
+                    };
                     let outcome = if done {
                         Some(info_to_outcome(&GameFinishedInfo::from(next.clone())))
                     } else {
                         None
                     };
                     self.game = Some(next);
-                    Response::Obs { obs, done, outcome }
+                    Response::Obs { obs, done, labels, outcome }
                 } else {
                     Response::Error { message: "Pass combination not legal for current player".into() }
                 }
@@ -309,8 +342,24 @@ impl Server {
                     None => return Response::Error { message: "No game in progress".into() },
                 };
                 let done = game.ended();
-                let obs = ObservationJson::from(build_observation(game, self.pov.clone()));
-                Response::Obs { obs, done, outcome: None }
+                let obs_full = build_observation(game, self.pov.clone());
+                let obs = ObservationJson::from(&obs_full);
+                let labels = if self.include_labels {
+                    Some(ObservationTrainLabelsJson::from(&obs_full))
+                } else {
+                    None
+                };
+                Response::Obs { obs, done, labels, outcome: None }
+            }
+
+            Request::ObserveDebug => {
+                let game = match &self.game {
+                    Some(g) => g,
+                    None => return Response::Error { message: "No game in progress".into() },
+                };
+                let obs_full = build_observation(game, self.pov.clone());
+                let debug = ObservationDebugJson::from(&obs_full);
+                Response::DebugObs { debug }
             }
 
             Request::GetHeuristicAction => {
