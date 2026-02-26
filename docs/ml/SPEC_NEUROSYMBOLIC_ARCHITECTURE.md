@@ -30,6 +30,7 @@ Required deterministic features include:
 4. Opponent confirmed-card masks from Q/A semantics.
 5. Current trump, announced trump history.
 6. Relative active seat and cards remaining.
+7. Coarse game phase indicator (bidding/passing/trick/answering/other).
 
 ## 4. Neural Responsibilities (Policy/Value)
 

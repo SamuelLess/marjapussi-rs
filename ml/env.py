@@ -249,6 +249,7 @@ def obs_to_tensors(obs: dict, labels: Optional[dict] = None) -> dict:
     # Parity 0 means my team (0 or 2), Parity 1 means opp team (1 or 3)
     parity_idx = obs['active_player'] % 2
     active_parity = F.one_hot(torch.tensor([parity_idx]), 2).float()
+    phase_oh = encode_phase(obs.get("phase", ""))
 
     obs_a = {
         'card_feats': build_card_features_batch([obs]),   # [1, 36, 16]
@@ -267,6 +268,7 @@ def obs_to_tensors(obs: dict, labels: Optional[dict] = None) -> dict:
         'pts_opp': torch.tensor([[obs['points_opp_team'] / 420.0]]),
         'last_bonus': torch.tensor([[float(obs['last_trick_bonus_live'])]]),
         'active_parity': active_parity,
+        'phase_oh': phase_oh,
     }
 
     # Token sequence [1, L]
@@ -317,6 +319,25 @@ def trick_bitmask(obs: dict) -> torch.Tensor:
     for idx in obs.get('current_trick_indices', []):
         mask[0, idx] = 1.0
     return mask
+
+
+def encode_phase(phase_name: str) -> torch.Tensor:
+    """
+    Encode coarse game phase for robustness across future phase refactors.
+    Order: bidding, passing, trick, answering, terminal/other.
+    """
+    name = str(phase_name)
+    if name in {"Bidding", "Raising"}:
+        idx = 0
+    elif name in {"PassingForth", "PassingBack"}:
+        idx = 1
+    elif name in {"StartTrick", "Trick"}:
+        idx = 2
+    elif name.startswith("AnsweringPair") or name.startswith("AnsweringHalf"):
+        idx = 3
+    else:
+        idx = 4
+    return F.one_hot(torch.tensor([idx]), 5).float()
 
 
 def encode_legal_actions(legal: list[dict]) -> tuple[torch.Tensor, torch.Tensor]:

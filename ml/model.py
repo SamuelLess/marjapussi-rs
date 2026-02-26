@@ -109,6 +109,7 @@ class StreamA(nn.Module):
         pts_mine:       [B, 1]      — points my team / 120
         pts_opp:        [B, 1]      — points opp team / 120
         last_bonus:     [B, 1]      — last trick bonus live bit
+        phase_oh:       [B, 5]      — coarse phase one-hot
     """
 
     def __init__(self, card_emb_dim=128, state_dim=512):
@@ -125,9 +126,9 @@ class StreamA(nn.Module):
         # A1: hand (128) + A2: 3×opp (384) + A3: trick (128) + A3: trick_pos (4)
         # + A4: trump (5) + trump_called (4) + trump_poss (3) + role (5)
         #      + trick_num (1) + pts_mine (1) + pts_opp (1) + last_bonus (1)
-        #      + cards_rem (4) + active_parity (2)
-        # = 128 + 384 + 128 + 4 + 5 + 4 + 3 + 5 + 1 + 1 + 1 + 1 + 4 + 2 = 671
-        raw_dim = card_emb_dim + (3 * card_emb_dim) + card_emb_dim + 4 + 5 + 4 + 3 + 5 + 1 + 1 + 1 + 1 + 4 + 2
+        #      + cards_rem (4) + active_parity (2) + phase_oh (5)
+        # = 128 + 384 + 128 + 4 + 5 + 4 + 3 + 5 + 1 + 1 + 1 + 1 + 4 + 2 + 5 = 676
+        raw_dim = card_emb_dim + (3 * card_emb_dim) + card_emb_dim + 4 + 5 + 4 + 3 + 5 + 1 + 1 + 1 + 1 + 4 + 2 + 5
         self.state_enc = nn.Sequential(
             nn.Linear(raw_dim, state_dim),
             nn.ReLU(),
@@ -170,11 +171,12 @@ class StreamA(nn.Module):
         last_bonus = obs['last_bonus'].to(device)        # [B, 1]
         cards_rem = obs['cards_rem'].to(device)          # [B, 4]
         active_parity = obs['active_parity'].to(device)  # [B, 2]
+        phase_oh = obs['phase_oh'].to(device)            # [B, 5]
 
         raw = torch.cat([
             hand_emb, opp_cat, trick_emb,
             trick_pos, trump_oh, trump_called, trump_poss, role_oh,
-            trick_num, pts_mine, pts_opp, last_bonus, cards_rem, active_parity
+            trick_num, pts_mine, pts_opp, last_bonus, cards_rem, active_parity, phase_oh
         ], dim=-1)
 
         return self.state_enc(raw)   # [B, 128]
@@ -354,6 +356,7 @@ if __name__ == '__main__':
         'pts_opp': torch.zeros((B, 1)),
         'last_bonus': torch.zeros((B, 1)),
         'active_parity': torch.zeros((B, 2)),
+        'phase_oh': torch.zeros((B, 5)),
     }
     batch = {
         'obs_a': obs_a,

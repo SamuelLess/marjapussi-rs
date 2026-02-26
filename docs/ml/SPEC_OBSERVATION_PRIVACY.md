@@ -20,7 +20,7 @@ ML payload may include only:
 1. POV hand information.
 2. Public trick/history information.
 3. Deterministic symbolic deductions valid from POV (possible/confirmed masks).
-4. Relative-seat context fields and legal actions.
+4. Relative-seat context fields, coarse phase indicator, and legal actions.
 
 ## 4. ML-Forbidden Fields
 
