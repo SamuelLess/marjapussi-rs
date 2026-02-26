@@ -5,6 +5,7 @@ default:
 os := os()
 python := if os == "windows" { ".venv/Scripts/python.exe" } else { ".venv/bin/python" }
 ml_server_bin := if os == "windows" { "target/release/ml_server.exe" } else { "target/release/ml_server" }
+ml_convert_bin := if os == "windows" { "target/release/ml_convert_legacy.exe" } else { "target/release/ml_convert_legacy" }
 
 # Ensure virtual environment exists.
 ensure-venv:
@@ -36,10 +37,30 @@ setup-ml: install-ml-deps build-ml-server-release
 build-ml-server-release:
     RUSTFLAGS="-C target-cpu=native" cargo build --release --bin ml_server
 
+# Convert legacy human games into decision-point NDJSON.
+build-human-dataset input="ml/dataset/games.json" output="ml/data/human_dataset.ndjson": build-ml-server-release
+    RUSTFLAGS="-C target-cpu=native" cargo build --release --bin ml_convert_legacy
+    {{ml_convert_bin}} --input {{input}} --output {{output}}
+
+# Supervised pretraining on converted human data.
+pretrain-human data="ml/data/human_dataset.ndjson" epochs="4" max_steps="512":
+    @echo "Pretraining from human dataset {{data}} using virtual environment python: {{python}}"
+    {{python}} ml/train_from_dataset.py --data {{data}} --epochs {{epochs}} --batch 1024 --workers 4 --device cuda --max-steps {{max_steps}}
+
 # Train the model with 512 rounds, 128 games per round, and checkpoint every 16 rounds (total 65,536 games)
 train-65k: setup-ml
     @echo "Running training using virtual environment python: {{python}}"
     ML_SERVER_BIN={{ml_server_bin}} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {{python}} ml/train_online.py --rounds 512 --games-per-round 128 --workers 32 --mc-rollouts 4 --device cuda --eval-every 16 --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3
+
+# Alias for explicit scratch baseline naming.
+train-65k-scratch: train-65k
+
+# Human-first training profile:
+# 1) convert legacy logs, 2) supervised warm-start (~50% upfront step budget), 3) RL fine-tune.
+train-65k-human: setup-ml build-human-dataset
+    @echo "Running human pretraining warm-start (max_steps=512) before RL fine-tune..."
+    {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 4 --batch 1024 --workers 4 --device cuda --max-steps 512
+    ML_SERVER_BIN={{ml_server_bin}} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {{python}} ml/train_online.py --rounds 512 --games-per-round 128 --workers 32 --mc-rollouts 4 --device cuda --eval-every 16 --checkpoint ml/checkpoints/latest.pt --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3 --named-checkpoint human_first_65k.pt
 
 # 128k-game run profile: 256 games/round, 24 workers (optimized for this machine).
 train-128k: setup-ml

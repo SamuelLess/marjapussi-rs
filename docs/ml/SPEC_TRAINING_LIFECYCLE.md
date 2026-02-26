@@ -62,6 +62,7 @@ Requirements:
 1. No PPO ratio assumptions in this stage.
 2. Dataset shuffling and deterministic seed support.
 3. Checkpoint metadata includes data snapshot and schema version.
+4. Support optional hard cap on supervised optimizer steps (`max_steps`) for budgeted warm-starts.
 
 ## 5. Stage 2: Offline Validation Gate
 
@@ -108,8 +109,18 @@ The training loop must expose parameters needed to compare strategies:
 3. Curriculum phase schedule for trick/passing/bidding.
 4. Counterfactual rollout policy mix.
 5. Loss weighting schedule (imitation vs RL).
+6. Pretraining budget control (for example fixed `max_steps` or ratio-based policy).
 
 The same fixed evaluation suite must be used across strategy runs to compare outcomes.
+
+## 8.1 Reference Profiles
+
+Project recipes should keep at least two directly comparable profiles:
+
+1. `train-65k-scratch`: RL/self-play only baseline.
+2. `train-65k-human`: legacy-human pretraining warm-start, then same RL schedule.
+
+Default human-first warm-start budget is configured as a front-loaded 50% step budget (`max_steps=512`) for the 65k profile.
 
 ## 9. Checkpoint Governance
 

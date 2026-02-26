@@ -28,6 +28,11 @@ name = "ml_generate"
 path = "src/bin/ml_generate.rs"
 bench = false
 
+[[bin]]
+name = "ml_convert_legacy"
+path = "src/bin/ml_convert_legacy.rs"
+bench = false
+
 [dependencies]
 itertools = "0.14.0"
 strum = "0.27.1"

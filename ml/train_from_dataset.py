@@ -146,7 +146,7 @@ def collate(records: list[dict]):
 
 def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
           device: str = "cpu", ckpt: str | None = None, workers: int = 4,
-          log_every: int = 500, amp: bool = True):
+          log_every: int = 500, amp: bool = True, max_steps: int = 0):
     configure_torch_runtime(device=device, workers=workers)
 
     model = MarjapussiNet().to(device)
@@ -168,6 +168,7 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
 
     sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs * steps_per_epoch)
 
+    global_step = 0
     for epoch in range(epochs):
         print(f"\n== Epoch {epoch+1}/{epochs} ==")
         ds = NdJsonDataset(data_path, shuffle_buf=min(100_000, batch * 200), epochs=1)
@@ -179,6 +180,7 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
         model.train()
         t0 = time.time(); step = 0; sum_loss = sum_bc = sum_pts = 0.0
 
+        stop_early = False
         for batch_data in loader:
             if batch_data is None: continue
 
@@ -218,6 +220,7 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(opt); scaler.update()
             sched.step()
+            global_step += 1
 
             sum_loss += loss.item(); sum_bc += bc_loss.item(); sum_pts += pts_loss.item()
             step += 1
@@ -229,10 +232,17 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
                       f"  pts={sum_pts/step:.4f}  {rate:,.0f} samples/s"
                       f"  lr={sched.get_last_lr()[0]:.2e}")
 
+            if max_steps > 0 and global_step >= max_steps:
+                print(f"  -> Reached max_steps={max_steps}, stopping pretraining early.")
+                stop_early = True
+                break
+
         ckpt_path = CKPT_DIR / f"epoch_{epoch+1}.pt"
         torch.save(model.state_dict(), ckpt_path)
         torch.save(model.state_dict(), CKPT_DIR / "latest.pt")
         print(f"  -> Saved {ckpt_path}")
+        if stop_early:
+            break
 
     print("\nTraining done. Checkpoint: ml/checkpoints/latest.pt")
     print("Next: python ml/train.py --checkpoint ml/checkpoints/latest.pt  (self-play fine-tune)")
@@ -248,6 +258,8 @@ if __name__ == "__main__":
     p.add_argument("--workers",  type=int,   default=4,       help="DataLoader workers")
     p.add_argument("--checkpoint", default=None)
     p.add_argument("--log-every", type=int,  default=500)
+    p.add_argument("--max-steps", type=int, default=0,
+                   help="Optional hard cap on optimizer steps (0 = disabled)")
     p.add_argument("--no-amp",   action="store_true",         help="Disable mixed precision")
     args = p.parse_args()
 
@@ -257,4 +269,5 @@ if __name__ == "__main__":
 
     train(data_path=args.data, epochs=args.epochs, batch=args.batch,
           lr=args.lr, device=args.device, ckpt=args.checkpoint,
-          workers=args.workers, log_every=args.log_every, amp=not args.no_amp)
+          workers=args.workers, log_every=args.log_every,
+          amp=not args.no_amp, max_steps=args.max_steps)
