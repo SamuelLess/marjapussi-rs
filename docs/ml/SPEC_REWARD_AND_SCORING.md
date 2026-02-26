@@ -99,6 +99,12 @@ Reward/scoring config must include:
 3. Shaping weights.
 4. Normalization constants.
 
+Implementation note:
+
+1. Reward computation is centralized in `ml/train/reward.py`.
+2. `train_online.py` exposes core reward knobs:
+   `--points-normalizer`, `--passgame-base-reward`, `--step-delta-scale`.
+
 All config values are checkpointed and logged in evaluation output.
 
 ## 8. Required Tests

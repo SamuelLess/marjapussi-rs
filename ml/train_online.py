@@ -48,6 +48,7 @@ RUNS_DIR.mkdir(exist_ok=True)
 from train.utils import Log, Transition
 from train.pool import BatchInferenceServer, EnvPool
 from train.loss import train_step
+from train.reward import RewardConfig, contract_reward_from_pov, point_delta_reward, pov_team_points
 
 
 def configure_torch_runtime(device: str, workers: int) -> None:
@@ -74,46 +75,6 @@ def _is_passing_action(legal: list[dict]) -> bool:
     return bool(legal and legal[0].get("action_token") == 43)
 
 
-def _pov_team_points(info: dict, pov_party: int) -> tuple[float, float]:
-    team_points = info.get("team_points", [0, 0])
-    t0 = float(team_points[0])
-    t1 = float(team_points[1])
-    return (t0, t1) if pov_party == 0 else (t1, t0)
-
-
-def _contract_reward_from_pov(info: dict, pov_party: int) -> tuple[float, int, int, int | None]:
-    """
-    Return (terminal_reward_from_pov, tricks_party_0, tricks_party_1, playing_party_abs).
-    Reward is aligned to contract outcome (including Schwarz multiplier), not raw trick points.
-    """
-    pts_team0, pts_team1 = info.get("team_points", [0, 0])
-    tricks_party_0 = sum(1 for t in info.get("tricks", []) if t["winner"] % 2 == 0)
-    tricks_party_1 = sum(1 for t in info.get("tricks", []) if t["winner"] % 2 == 1)
-
-    playing_party_raw = info.get("playing_party")
-    playing_party_abs = None if playing_party_raw is None else int(playing_party_raw)
-    if playing_party_abs is None:
-        # Pass game: small constant outcome reward based on who got more points.
-        base_passgame_reward = 115.0 / 420.0
-        pov_pts, opp_pts = _pov_team_points(info, pov_party)
-        if pov_pts > opp_pts:
-            return base_passgame_reward, tricks_party_0, tricks_party_1, None
-        if opp_pts > pov_pts:
-            return -base_passgame_reward, tricks_party_0, tricks_party_1, None
-        return 0.0, tricks_party_0, tricks_party_1, None
-
-    game_value = float(info.get("game_value", 0)) / 420.0
-    schwarz_mult = 2.0 if info.get("schwarz", False) else 1.0
-    won_contract = bool(info.get("won", False))
-    is_playing_team = (playing_party_abs == pov_party)
-
-    if won_contract:
-        diff = game_value * schwarz_mult if is_playing_team else -game_value * schwarz_mult
-    else:
-        diff = -game_value * schwarz_mult if is_playing_team else game_value * schwarz_mult
-    return diff, tricks_party_0, tricks_party_1, playing_party_abs
-
-
 def run_episode(
     env: MarjapussiEnv,
     model,
@@ -130,6 +91,7 @@ def run_episode(
     adv_query_mode: str = "target",
     adv_non_target_prob: float = 0.0,
     max_adv_calls_per_episode: int = 1,
+    reward_cfg: RewardConfig = RewardConfig(),
 ) -> list[Transition]:
     """
     Play one complete game and return training transitions for POV-controlled decisions only.
@@ -233,15 +195,12 @@ def run_episode(
             else:
                 action_pos = env.get_heuristic_action() if len(legal) > 1 else 0
 
-            prev_my_pts = float(obs.get("points_my_team", 0))
-            prev_opp_pts = float(obs.get("points_opp_team", 0))
+            prev_obs = obs
             obs, _, info = env.step(legal[action_pos]["action_list_idx"])
             t_step_total += time.perf_counter() - t0_step
 
             # Reward from POV perspective; accumulate until next POV decision.
-            my_diff = float(obs.get("points_my_team", 0)) - prev_my_pts
-            opp_diff = float(obs.get("points_opp_team", 0)) - prev_opp_pts
-            step_reward = (my_diff - opp_diff) / 420.0
+            step_reward = point_delta_reward(prev_obs, obs, reward_cfg)
             if pending is not None:
                 pending = pending._replace(imm_r=pending.imm_r + step_reward)
 
@@ -263,10 +222,12 @@ def run_episode(
 
         pov_party = env.pov % 2
         if info and "team_points" in info:
-            pts_my, pts_opp = _pov_team_points(info, pov_party)
-            pts_my_norm = pts_my / 420.0
-            pts_opp_norm = pts_opp / 420.0
-            terminal_diff, tricks_party_0, tricks_party_1, playing_party = _contract_reward_from_pov(info, pov_party)
+            pts_my, pts_opp = pov_team_points(info, pov_party)
+            pts_my_norm = pts_my / reward_cfg.points_normalizer
+            pts_opp_norm = pts_opp / reward_cfg.points_normalizer
+            terminal_diff, tricks_party_0, tricks_party_1, playing_party = contract_reward_from_pov(
+                info, pov_party, reward_cfg
+            )
         else:
             pts_my_norm = 0.5
             pts_opp_norm = 0.5
@@ -394,7 +355,7 @@ def collate(transitions: list[Transition], device: str):
 
 # ── Evaluation ────────────────────────────────────────────────────────────────
 
-def eval_deterministic(model, device, n=100) -> dict:
+def eval_deterministic(model, device, n=100, reward_cfg: RewardConfig = RewardConfig()) -> dict:
     model.eval()
     server = BatchInferenceServer(model, device, max_batch=1, greedy=True) # Serial deterministic eval
     env = MarjapussiEnv(include_labels=False)
@@ -413,6 +374,7 @@ def eval_deterministic(model, device, n=100) -> dict:
                 inference_server=server,
                 seed=seed,
                 pov=(seed - 1) % 4,
+                reward_cfg=reward_cfg,
             )
             if eps:
                 last_t = eps[-1]
@@ -458,6 +420,9 @@ def train_online(
     forced_imitation_weight: float = 0.5,
     forced_imitation_decay_rounds: int = 128,
     named_checkpoint: str | None = None,
+    points_normalizer: float = 420.0,
+    passgame_base_reward: float = 115.0 / 420.0,
+    step_delta_scale: float = 1.0 / 420.0,
 ):
     configure_torch_runtime(device=device, workers=workers)
     use_amp = device.startswith("cuda")
@@ -465,6 +430,11 @@ def train_online(
     scaler  = GradScaler("cuda", enabled=use_amp)
     opt     = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     sched   = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=rounds)
+    reward_cfg = RewardConfig(
+        points_normalizer=points_normalizer,
+        passgame_base_reward=passgame_base_reward,
+        step_delta_scale=step_delta_scale,
+    )
 
     if checkpoint and Path(checkpoint).exists():
         model.load_state_dict(torch.load(checkpoint, map_location=device))
@@ -498,6 +468,11 @@ def train_online(
     Log.info(
         f"Forced-action imitation: base_weight={forced_imitation_weight:.2f}, "
         f"decay_rounds={forced_imitation_decay_rounds}"
+    )
+    Log.info(
+        f"Reward knobs: points_norm={reward_cfg.points_normalizer:.1f}, "
+        f"passgame_base={reward_cfg.passgame_base_reward:.4f}, "
+        f"step_delta_scale={reward_cfg.step_delta_scale:.6f}"
     )
     Log.info(f"Params: {model.param_count():,}\n")
 
@@ -562,7 +537,8 @@ def train_online(
                                   force_heuristic_passing=force_passing,
                                   adv_query_mode=adv_query_mode,
                                   adv_non_target_prob=adv_non_target_prob,
-                                  max_adv_calls_per_episode=max_adv_calls_per_episode)
+                                  max_adv_calls_per_episode=max_adv_calls_per_episode,
+                                  reward_cfg=reward_cfg)
             finally:
                 pool_envs.put(env)
             
@@ -705,7 +681,7 @@ def train_online(
 
         # ── Evaluate + checkpoint ────────────────────────────────────────────
         if (rnd + 1) % eval_every == 0 and stage == 1:
-            eval_metrics = eval_deterministic(model, device, n=100)
+            eval_metrics = eval_deterministic(model, device, n=100, reward_cfg=reward_cfg)
             avg_diff = eval_metrics["avg_diff"]
             print(f"           -> Point diff (100 games): {avg_diff:+.1f}")
             log_entry["avg_diff"] = avg_diff
@@ -794,6 +770,12 @@ if __name__ == "__main__":
                    help="Rounds over which forced-action imitation weight decays")
     p.add_argument("--named-checkpoint", default=None,
                    help="Optional checkpoint filename/path to update every round")
+    p.add_argument("--points-normalizer", type=float, default=420.0,
+                   help="Point normalization constant used by reward calculations")
+    p.add_argument("--passgame-base-reward", type=float, default=(115.0 / 420.0),
+                   help="Terminal reward magnitude for pass games")
+    p.add_argument("--step-delta-scale", type=float, default=(1.0 / 420.0),
+                   help="Scale for dense per-step point-delta reward")
     args = p.parse_args()
 
     if torch.cuda.is_available():
@@ -827,4 +809,7 @@ if __name__ == "__main__":
         forced_imitation_weight=args.forced_imitation_weight,
         forced_imitation_decay_rounds=args.forced_imitation_decay_rounds,
         named_checkpoint=args.named_checkpoint,
+        points_normalizer=args.points_normalizer,
+        passgame_base_reward=args.passgame_base_reward,
+        step_delta_scale=args.step_delta_scale,
     )
