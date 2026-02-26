@@ -128,14 +128,28 @@ class MarjapussiEnv:
                 "Run: cargo build --release --bin ml_server"
             )
         spawn_binary = self._prepare_spawn_binary()
+        popen_kwargs = {
+            "stdin": subprocess.PIPE,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+            "bufsize": 1,
+        }
+        if os.name == "nt":
+            # Isolate ml_server from Ctrl+C events sent to the parent console group.
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         self.proc = subprocess.Popen(
             [str(spawn_binary)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
+            **popen_kwargs,
         )
+
+    def is_alive(self) -> bool:
+        return bool(self.proc is not None and self.proc.poll() is None)
+
+    def return_code(self) -> Optional[int]:
+        if self.proc is None:
+            return None
+        return self.proc.poll()
 
     def reset(self, pov: Optional[int] = None, start_trick: Optional[int] = None, seed: Optional[int] = None) -> dict:
         if pov is not None:

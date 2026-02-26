@@ -677,6 +677,7 @@ def train_online(
         
         def collect_one(game_idx):
             env = pool_envs.get()
+            replacement_env = env
             try:
                 res = run_episode(env, model, device, mc_rollouts, stage, server,
                                   start_trick=curriculum_trick,
@@ -690,7 +691,18 @@ def train_online(
                                   max_info_adv_calls_per_episode=max_info_adv_calls_per_episode,
                                   reward_cfg=reward_cfg)
             finally:
-                pool_envs.put(env)
+                if not env.is_alive():
+                    rc = env.return_code()
+                    rc_hex = f"0x{(rc & 0xFFFFFFFF):08X}" if rc is not None else "n/a"
+                    Log.warn(
+                        f"Worker env died (rc={rc}, {rc_hex}); creating replacement ml_server instance."
+                    )
+                    try:
+                        env.close()
+                    except Exception:
+                        pass
+                    replacement_env = MarjapussiEnv(include_labels=True)
+                pool_envs.put(replacement_env)
             
             nonlocal completed_games
             with progress_lock:
