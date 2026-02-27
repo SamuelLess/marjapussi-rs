@@ -109,12 +109,6 @@ function connect() {
           const cp = controllers[k]?.checkpoint;
           if (cp != null && pendingSeatCheckpoint[k] === cp) delete pendingSeatCheckpoint[k];
         });
-        const active = getActiveSeat(gs?.obs || null);
-        if (!viewSelectInteracting && followActiveSeat && active >= 0) {
-          requestViewSeat(active);
-        } else if (!viewSelectInteracting && !followActiveSeat && viewSeat !== preferredManualViewSeat) {
-          requestViewSeat(preferredManualViewSeat);
-        }
         render();
         if (debugMode) send({ cmd: 'debug_state' });
         break;
@@ -272,9 +266,9 @@ function normalizeSeat(value) {
   return Math.max(0, Math.min(3, Math.trunc(n)));
 }
 
-function requestViewSeat(seat) {
+function requestViewSeat(seat, force = false) {
   const target = normalizeSeat(seat);
-  if (target === viewSeat || pendingViewSeat === target) return;
+  if (!force && (target === viewSeat || pendingViewSeat === target)) return;
   pendingViewSeat = target;
   send({ cmd: 'set_view_seat', seat: target });
 }
@@ -457,7 +451,6 @@ function render() {
 
   const active = getActiveSeat(obs);
   const tableViewSeat = currentViewSeat(active);
-  if (!viewSelectInteracting && followActiveSeat && active >= 0) requestViewSeat(active);
 
   // Hands (selective re-render)
   for (let s = 0; s < 4; s++) renderHand(s, obs, tableViewSeat);
@@ -1601,7 +1594,7 @@ document.getElementById('view-seat')?.addEventListener('change', ev => {
       // Update immediately for responsive UI, then sync with backend.
       viewSeat = active;
       pendingViewSeat = null;
-      requestViewSeat(active);
+      requestViewSeat(active, true);
     }
   } else {
     followActiveSeat = false;
@@ -1609,7 +1602,7 @@ document.getElementById('view-seat')?.addEventListener('change', ev => {
     // Update immediately for responsive UI, then sync with backend.
     viewSeat = preferredManualViewSeat;
     pendingViewSeat = null;
-    requestViewSeat(preferredManualViewSeat);
+    requestViewSeat(preferredManualViewSeat, true);
   }
   persistUiPrefs();
   render();
