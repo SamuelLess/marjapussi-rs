@@ -418,13 +418,17 @@ impl Server {
                         self.game = Some(next);
                         return Response::Obs { obs, done, labels, outcome };
                     }
-
-                    return Response::Error {
-                        message: format!(
-                            "expected sequential pass-pick action_list_idx while passing, got {}",
-                            action_idx
-                        ),
-                    };
+                    // Non-sequential fallback: allow direct legal action index during pass phase.
+                    // This is used when stepping non-POV seats from observations that expose
+                    // raw legal pass combinations instead of sequential pick actions.
+                    if action_idx >= game.legal_actions.len() {
+                        return Response::Error {
+                            message: format!(
+                                "expected sequential pass-pick action_list_idx while passing, got {}",
+                                action_idx
+                            ),
+                        };
+                    }
                 }
 
                 if action_idx >= game.legal_actions.len() {
@@ -539,8 +543,7 @@ impl Server {
                     None => return Response::Error { message: "No game in progress".into() },
                 };
 
-                let actor = game.state.player_at_turn.clone();
-                if let Some(pass_options) = self.pass_options_for_turn(&game, actor) {
+                if let Some(pass_options) = self.pass_options_for_turn(&game, self.pov.clone()) {
                     let legal_pick_actions = build_pick_legal_actions(&pass_options, self.pass_selection.selected());
                     if legal_pick_actions.is_empty() {
                         return Response::HeuristicAction { action_idx: 0 };
@@ -602,8 +605,7 @@ impl Server {
                     PolicyName::Heuristic => heuristic_policy(),
                 };
                 let branches_raw = try_all_actions(&game, &pol, &mut self.cache, num_rollouts);
-                let actor = game.state.player_at_turn.clone();
-                let branches = if let Some(pass_options) = self.pass_options_for_turn(&game, actor) {
+                let branches = if let Some(pass_options) = self.pass_options_for_turn(&game, self.pov.clone()) {
                     let selected = self.pass_selection.selected().to_vec();
                     let pick_actions = build_pick_legal_actions(&pass_options, &selected);
                     pick_actions
@@ -676,8 +678,7 @@ impl Server {
                     .map(|(_, infos)| self.branch_score_for_infos(infos, acting_party.clone()))
                     .collect();
 
-                let actor = game.state.player_at_turn.clone();
-                let advantages = if let Some(pass_options) = self.pass_options_for_turn(&game, actor) {
+                let advantages = if let Some(pass_options) = self.pass_options_for_turn(&game, self.pov.clone()) {
                     let selected = self.pass_selection.selected().to_vec();
                     let pick_scores: Vec<f32> = candidate_scores(&pass_options, &selected, &action_scores)
                         .into_iter()
