@@ -12,7 +12,8 @@ lr = 0.0003
 # model_config = "ml/config/model_parallel_v2.toml"
 # strict_param_budget = 28000000
 start_round = 0
-eval_every = 10
+eval_every = 16
+save_latest_every = 16
 
 # --- PPO / optimization control ---
 ppo_epochs = 3

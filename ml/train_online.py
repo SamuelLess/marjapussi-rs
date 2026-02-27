@@ -508,6 +508,7 @@ def train_online(
     model_config: str | None = None,
     strict_param_budget: int | None = None,
     eval_every: int     = 10,
+    save_latest_every: int = 16,
     ppo_epochs: int     = 3,
     min_ppo_epochs: int = 2,
     balance_opt_time: bool = False,
@@ -592,6 +593,10 @@ def train_online(
         f"min_epochs={min_ppo_epochs}, base_epochs={ppo_epochs}, max_epochs={max_ppo_epochs}, "
         f"target_kl={target_kl:.3f}, max_clipfrac={max_clipfrac:.2f}, "
         f"min_policy_improve={min_policy_improve:.4f}, patience={opt_early_stop_patience}"
+    )
+    Log.info(
+        f"Checkpoint cadence: eval_every={max(1, eval_every)} rounds, "
+        f"save_latest_every={max(1, save_latest_every)} rounds"
     )
     if balance_opt_time:
         Log.info(f"Time balancing enabled: target opt/sim ratio={target_opt_sim_ratio:.2f}")
@@ -931,23 +936,27 @@ def train_online(
             )
             Log.info(f"Saved 50k milestone checkpoint: {ckpt_name}")
 
-        latest_payload = build_checkpoint_payload(
-            model,
-            metadata={
-                **model_meta,
-                "schema_version": SUPPORTED_OBS_SCHEMA_VERSION,
-                "action_encoding_version": 1,
-                "action_feat_dim": ACTION_FEAT_DIM,
-            },
-            extra_metadata={
-                "checkpoint_kind": "latest",
-                "round": rnd + 1,
-                "stage": stage,
-            },
+        should_save_latest = (
+            ((rnd + 1) % max(1, int(save_latest_every)) == 0) or ((rnd + 1) == rounds)
         )
-        atomic_torch_save(latest_payload, ckpt_dir / "latest.pt")
-        if named_ckpt_path is not None:
-            atomic_torch_save(latest_payload, named_ckpt_path)
+        if should_save_latest:
+            latest_payload = build_checkpoint_payload(
+                model,
+                metadata={
+                    **model_meta,
+                    "schema_version": SUPPORTED_OBS_SCHEMA_VERSION,
+                    "action_encoding_version": 1,
+                    "action_feat_dim": ACTION_FEAT_DIM,
+                },
+                extra_metadata={
+                    "checkpoint_kind": "latest",
+                    "round": rnd + 1,
+                    "stage": stage,
+                },
+            )
+            atomic_torch_save(latest_payload, ckpt_dir / "latest.pt")
+            if named_ckpt_path is not None:
+                atomic_torch_save(latest_payload, named_ckpt_path)
         with open(log_path, "a") as f:
             f.write(json.dumps({"event": "update", **log_entry}) + "\n")
 
@@ -988,6 +997,8 @@ if __name__ == "__main__":
                    help="Round to start/resume from")
     p.add_argument("--eval-every",       type=int,   default=10,
                    help="Evaluate win rate every N rounds")
+    p.add_argument("--save-latest-every", type=int, default=16,
+                   help="Save latest/named rolling checkpoints every N rounds (final round always saves)")
     p.add_argument("--ppo-epochs",       type=int,   default=3,
                    help="Number of PPO optimization passes over collected data")
     p.add_argument("--min-ppo-epochs",   type=int,   default=2,
@@ -1073,6 +1084,7 @@ if __name__ == "__main__":
         checkpoint=args.checkpoint,
         start_round=args.start_round,
         eval_every=args.eval_every,
+        save_latest_every=args.save_latest_every,
         ppo_epochs=args.ppo_epochs,
         min_ppo_epochs=args.min_ppo_epochs,
         balance_opt_time=args.balance_opt_time,
