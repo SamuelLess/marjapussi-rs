@@ -200,6 +200,19 @@ class GameManager:
         p = CHECKPOINT_DIR / raw.name
         return p if p.exists() else None
 
+    def _checkpoint_label(self, path: Path) -> str:
+        """Return a stable checkpoint label that can be resolved again later."""
+        rp = path.resolve()
+        try:
+            if rp.parent == CHECKPOINT_DIR.resolve():
+                return path.name
+        except Exception:
+            pass
+        try:
+            return str(rp.relative_to(ML.resolve()))
+        except Exception:
+            return str(path)
+
     def available_checkpoints(self) -> list[str]:
         roots: list[Path] = [CHECKPOINT_DIR]
         if RUNS_DIR.exists():
@@ -246,10 +259,11 @@ class GameManager:
             return None, checkpoint, f"Checkpoint not found: {checkpoint or 'latest.pt'}"
 
         key = str(path.resolve())
+        label = self._checkpoint_label(path)
         if force:
             self.model_cache.pop(key, None)
         if key in self.model_cache:
-            return self.model_cache[key], path.name, None
+            return self.model_cache[key], label, None
 
         try:
             state, ckpt_meta, _ = parse_checkpoint(path, map_location="cpu")
@@ -273,9 +287,9 @@ class GameManager:
                     f"Partially loaded {path.name}: "
                     f"{loaded} tensors loaded, {skipped} skipped (model/version mismatch)."
                 )
-            return model, path.name, warn
+            return model, label, warn
         except Exception as e:
-            return None, path.name, f"Failed to load checkpoint {path.name}: {e}"
+            return None, label, f"Failed to load checkpoint {path.name}: {e}"
 
     def _try_enable_model_for_seat(self, seat: int, checkpoint: Optional[str]) -> None:
         model, resolved, err = self._load_model(checkpoint)

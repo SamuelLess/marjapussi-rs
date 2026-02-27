@@ -133,6 +133,27 @@ class UiServerSmokeTest(unittest.TestCase):
             except Exception:
                 pass
 
+    def test_load_model_preserves_resolvable_relative_checkpoint_label(self):
+        tag = f".ui_test_{uuid.uuid4().hex}"
+        rel_path = Path("runs") / tag / "checkpoints" / "bad.pt"
+        abs_path = ROOT / rel_path
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        abs_path.write_bytes(b"not_a_valid_checkpoint")
+        try:
+            gm = ui_server.GameManager(checkpoint=None)
+            model, resolved_name, err = gm._load_model(str(rel_path), force=True)
+            self.assertIsNone(model)
+            self.assertIsNotNone(err)
+            self.assertEqual(resolved_name, str(rel_path))
+            gm.close()
+        finally:
+            try:
+                abs_path.unlink(missing_ok=True)
+                abs_path.parent.rmdir()
+                abs_path.parent.parent.rmdir()
+            except Exception:
+                pass
+
     def test_load_model_partial_fallback(self):
         if not ui_server.TORCH_OK:
             self.skipTest("PyTorch unavailable")
