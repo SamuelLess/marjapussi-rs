@@ -132,6 +132,32 @@ def _is_info_action(legal: list[dict]) -> bool:
     return any(la.get("action_token") in (44, 45, 46, 47, 48, 49, 50) for la in legal)
 
 
+def _select_curriculum(progress: float, rnd: int) -> tuple[str, int | None]:
+    """
+    Curriculum schedule:
+      - first 50%: card-play focus only
+      - next 5%: passing focus
+      - next 5%: bidding focus
+      - last 40%: full-game sequence training
+    Returns (train_phase, start_trick).
+      start_trick:
+        1..9  => card-play phase at target trick
+        0     => passing phase
+        -1    => bidding phase
+        None  => full game from the beginning
+    """
+    p = max(0.0, min(1.0, float(progress)))
+    if p < 0.50:
+        # Sweep across all trick indices deterministically to cover whole trick-play space.
+        trick_target = 1 + (rnd % 9)
+        return "trick", trick_target
+    if p < 0.55:
+        return "passing", 0
+    if p < 0.60:
+        return "bidding_prop", -1
+    return "full_game", None
+
+
 def atomic_torch_save(payload: Any, path: Path, retries: int = 5, delay_s: float = 0.05) -> None:
     """
     Atomically publish checkpoints so readers never see partially-written files.
@@ -659,29 +685,15 @@ def train_online(
 
         # Curriculum logic
         progress = rnd / max(1, rounds)
-        if progress < 0.30:
-            train_phase = "trick"
-            curriculum_trick = max(1, 8 - int(8 * (progress / 0.30)))
-        else:
-            if random.random() < 0.10:
-                # 10% All Tricks Refresher
-                train_phase = "trick"
-                curriculum_trick = 8
-            elif progress < 0.60:
-                train_phase = "passing"
-                curriculum_trick = 0
-            elif progress < 0.80:
-                train_phase = "bidding_value"
-                curriculum_trick = -1
-            else:
-                train_phase = "bidding_prop"
-                curriculum_trick = -1
+        train_phase, curriculum_trick = _select_curriculum(progress, rnd)
         
         completed_games = 0
         progress_lock = threading.Lock()
 
-        force_passing = progress < force_passing_until_progress
-        force_bidding = progress < force_bidding_until_progress
+        # Do not keep forcing heuristics deep into the full-game phase.
+        force_until = 0.60
+        force_passing = progress < min(force_passing_until_progress, force_until)
+        force_bidding = progress < min(force_bidding_until_progress, force_until)
         
         def collect_one(game_idx):
             env = pool_envs.get()
@@ -724,7 +736,7 @@ def train_online(
                         f"Round {rnd+1}/{rounds} | "
                         f"Progress: {completed_games}/{games_per_round} ({gps:.1f} games/s) | "
                         f"ETA: {_format_eta(eta_games)} | "
-                        f"TargetTrick: {curriculum_trick}",
+                        f"TargetTrick: {curriculum_trick if curriculum_trick is not None else 'full'}",
                         end=""
                     )
             return res
