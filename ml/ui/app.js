@@ -58,6 +58,7 @@ let viewSeat = 0;
 let pendingViewSeat = null;
 let followActiveSeat = true;
 let preferredManualViewSeat = 0;
+let viewSelectInteracting = false;
 const UI_PREFS_KEY = 'marjapussi.ui.prefs.v1';
 
 let debugMode = false;
@@ -97,7 +98,7 @@ function connect() {
         ainfo = m.ai_info || {};
         controllers = gs?.controllers || {};
         seatViews = gs?.seat_views || {};
-        if (Number.isInteger(gs?.view_seat)) {
+        if (!viewSelectInteracting && Number.isInteger(gs?.view_seat)) {
           viewSeat = Math.max(0, Math.min(3, Number(gs.view_seat)));
           if (pendingViewSeat === viewSeat) pendingViewSeat = null;
         }
@@ -109,9 +110,9 @@ function connect() {
           if (cp != null && pendingSeatCheckpoint[k] === cp) delete pendingSeatCheckpoint[k];
         });
         const active = getActiveSeat(gs?.obs || null);
-        if (followActiveSeat && active >= 0) {
+        if (!viewSelectInteracting && followActiveSeat && active >= 0) {
           requestViewSeat(active);
-        } else if (!followActiveSeat && viewSeat !== preferredManualViewSeat) {
+        } else if (!viewSelectInteracting && !followActiveSeat && viewSeat !== preferredManualViewSeat) {
           requestViewSeat(preferredManualViewSeat);
         }
         render();
@@ -456,7 +457,7 @@ function render() {
 
   const active = getActiveSeat(obs);
   const tableViewSeat = currentViewSeat(active);
-  if (followActiveSeat && active >= 0) requestViewSeat(active);
+  if (!viewSelectInteracting && followActiveSeat && active >= 0) requestViewSeat(active);
 
   // Hands (selective re-render)
   for (let s = 0; s < 4; s++) renderHand(s, obs, tableViewSeat);
@@ -470,7 +471,7 @@ function render() {
   }
   updateTurnState(obs, active, tableViewSeat);
   const viewSel = document.getElementById('view-seat');
-  if (viewSel) {
+  if (viewSel && !viewSelectInteracting && document.activeElement !== viewSel) {
     const desired = (followActiveSeat && active >= 0) ? 'active' : String(viewSeat);
     if (viewSel.value !== desired) viewSel.value = desired;
   }
@@ -809,7 +810,12 @@ function renderBidArea(obs, active) {
     wait.className = 'bid-btn';
     wait.style.opacity = '0.6';
     wait.style.cursor = 'default';
-    wait.textContent = 'Warte auf legale Aktionen...';
+    const seatView = seatObs(active);
+    if (seatView && seatView.error) {
+      wait.textContent = `POV-Ansicht Fehler: ${seatView.error}`;
+    } else {
+      wait.textContent = 'Warte auf legale Aktionen...';
+    }
     ba.appendChild(wait);
     return;
   }
@@ -1166,6 +1172,11 @@ function evLog(ico, txt, cls = '') {
 
 function renderAI(obs) {
   const ct = document.getElementById('ai');
+  const activeEl = document.activeElement;
+  if (activeEl && ct && ct.contains(activeEl) && (activeEl.tagName === 'SELECT' || activeEl.tagName === 'INPUT')) {
+    // Keep controls stable while user is interacting with dropdowns/inputs.
+    return;
+  }
   ct.innerHTML = '';
   const names = ['Du (P0)', 'Links (P1)', 'Partner (P2)', 'Rechts (P3)'];
 
@@ -1602,6 +1613,16 @@ document.getElementById('view-seat')?.addEventListener('change', ev => {
   }
   persistUiPrefs();
   render();
+});
+
+document.getElementById('view-seat')?.addEventListener('focus', () => {
+  viewSelectInteracting = true;
+});
+document.getElementById('view-seat')?.addEventListener('pointerdown', () => {
+  viewSelectInteracting = true;
+});
+document.getElementById('view-seat')?.addEventListener('blur', () => {
+  viewSelectInteracting = false;
 });
 
 function tick() {
