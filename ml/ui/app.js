@@ -256,7 +256,8 @@ function seatObs(seat) {
 
 function actionObsForSeat(activeSeat) {
   if (activeSeat === 0) return gs?.obs || null;
-  if (effectiveMode(activeSeat) === 'human') return seatObs(activeSeat);
+  // In debug mode we allow manual action selection for non-human seats too.
+  if (effectiveMode(activeSeat) === 'human' || debugMode) return seatObs(activeSeat);
   return null;
 }
 
@@ -1585,10 +1586,18 @@ document.getElementById('view-seat')?.addEventListener('change', ev => {
   if (value === 'active') {
     followActiveSeat = true;
     const active = getActiveSeat(gs?.obs);
-    if (active >= 0) requestViewSeat(active);
+    if (active >= 0) {
+      // Update immediately for responsive UI, then sync with backend.
+      viewSeat = active;
+      pendingViewSeat = null;
+      requestViewSeat(active);
+    }
   } else {
     followActiveSeat = false;
     preferredManualViewSeat = normalizeSeat(value);
+    // Update immediately for responsive UI, then sync with backend.
+    viewSeat = preferredManualViewSeat;
+    pendingViewSeat = null;
     requestViewSeat(preferredManualViewSeat);
   }
   persistUiPrefs();

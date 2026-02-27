@@ -104,6 +104,20 @@ class UiServerSmokeTest(unittest.TestCase):
         self.assertEqual(views["3"]["seat"], 3)
         gm.close()
 
+    def test_seat_views_include_active_nonhuman_for_debug_actions(self):
+        class DummyEnv:
+            def observe_pov(self, seat: int):
+                return {"seat": seat}
+
+        gm = ui_server.GameManager(checkpoint=None)
+        gm.env = DummyEnv()
+        gm.obs = {"active_player": 3}
+        gm.set_controller(3, "heuristic")
+        views = gm.seat_views()
+        self.assertIn("3", views)
+        self.assertEqual(views["3"]["seat"], 3)
+        gm.close()
+
     def test_reload_model_keeps_checkpoint_choice(self):
         gm = ui_server.GameManager(checkpoint=None)
         gm.set_controller(1, "model", "definitely_missing_checkpoint_name")

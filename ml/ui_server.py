@@ -678,9 +678,9 @@ class GameManager:
         if self.view_seat > 0:
             seats.add(self.view_seat)
 
-        # Ensure a human-controlled active non-P0 seat is always viewable for input.
+        # Ensure active non-P0 seat is always viewable so UI can act/debug reliably.
         active = self.active_seat()
-        if active > 0 and self._effective_mode(active) == "human":
+        if active > 0:
             seats.add(active)
 
         for seat in sorted(seats):
