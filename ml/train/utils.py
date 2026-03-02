@@ -12,7 +12,9 @@ Transition = collections.namedtuple("Transition",
         "log_prob",
         "is_forced",
         "imm_r",
-    ])
+        "meta_advantage",
+    ],
+    defaults=[0.0])
 
 class Log:
     @staticmethod

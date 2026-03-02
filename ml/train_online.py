@@ -61,7 +61,12 @@ DEFAULT_CONFIG_PATH = Path(__file__).parent / "config" / "train_online.toml"
 from train.utils import Log, Transition
 from train.pool import BatchInferenceServer, EnvPool
 from train.loss import train_step
-from train.reward import RewardConfig, contract_reward_from_pov, point_delta_reward, pov_team_points
+from train.reward import (
+    RewardConfig,
+    contract_reward_from_pov,
+    point_delta_reward,
+    pov_team_points_evaluated,
+)
 
 
 def _format_eta(seconds: float) -> str:
@@ -132,30 +137,243 @@ def _is_info_action(legal: list[dict]) -> bool:
     return any(la.get("action_token") in (44, 45, 46, 47, 48, 49, 50) for la in legal)
 
 
-def _select_curriculum(progress: float, rnd: int) -> tuple[str, int | None]:
+PHASE_ORDER = ("trick", "passing", "bidding_prop", "full_game")
+
+
+def _build_phase_plan(
+    total_rounds: int,
+    trick_frac: float,
+    passing_frac: float,
+    bidding_frac: float,
+) -> dict[str, int]:
     """
-    Curriculum schedule:
-      - first 50%: card-play focus only
-      - next 5%: passing focus
-      - next 5%: bidding focus
-      - last 40%: full-game sequence training
-    Returns (train_phase, start_trick).
-      start_trick:
-        1..9  => card-play phase at target trick
-        0     => passing phase
-        -1    => bidding phase
-        None  => full game from the beginning
+    Convert phase ratios into round counts. Full-game gets the remainder.
     """
-    p = max(0.0, min(1.0, float(progress)))
-    if p < 0.50:
-        # Sweep across all trick indices deterministically to cover whole trick-play space.
-        trick_target = 1 + (rnd % 9)
-        return "trick", trick_target
-    if p < 0.55:
-        return "passing", 0
-    if p < 0.60:
-        return "bidding_prop", -1
-    return "full_game", None
+    total = max(1, int(total_rounds))
+    tf = max(0.0, float(trick_frac))
+    pf = max(0.0, float(passing_frac))
+    bf = max(0.0, float(bidding_frac))
+    frac_sum = tf + pf + bf
+    if frac_sum > 1.0:
+        scale = 1.0 / frac_sum
+        tf *= scale
+        pf *= scale
+        bf *= scale
+
+    trick_rounds = int(round(total * tf))
+    passing_rounds = int(round(total * pf))
+    bidding_rounds = int(round(total * bf))
+    full_rounds = total - trick_rounds - passing_rounds - bidding_rounds
+    if full_rounds < 0:
+        # Keep full-game non-negative by trimming earlier phases.
+        overflow = -full_rounds
+        while overflow > 0 and (bidding_rounds > 0 or passing_rounds > 0 or trick_rounds > 0):
+            if bidding_rounds > 0:
+                bidding_rounds -= 1
+            elif passing_rounds > 0:
+                passing_rounds -= 1
+            else:
+                trick_rounds -= 1
+            overflow -= 1
+        full_rounds = 0
+
+    return {
+        "trick": trick_rounds,
+        "passing": passing_rounds,
+        "bidding_prop": bidding_rounds,
+        "full_game": full_rounds,
+    }
+
+
+def _phase_start_trick(phase: str, phase_local_round: int) -> int | None:
+    if phase == "trick":
+        # Sweep across all 9 trick indices to cover trick-play space.
+        return 1 + ((max(1, int(phase_local_round)) - 1) % 9)
+    if phase == "passing":
+        return 0
+    if phase == "bidding_prop":
+        return -1
+    return None
+
+
+def _phase_override(default_value: int, override_value: int) -> int:
+    ov = int(override_value)
+    if ov > 0:
+        return ov
+    return int(default_value)
+
+
+def _normalize_signal(values: list[float]) -> list[float]:
+    if not values:
+        return []
+    mean = sum(values) / len(values)
+    var = sum((v - mean) ** 2 for v in values) / len(values)
+    std = math.sqrt(max(var, 0.0))
+    if std < 1e-8:
+        return [0.0 for _ in values]
+    return [(v - mean) / std for v in values]
+
+
+def _apply_round_meta_advantages(transitions: list[Transition]) -> list[Transition]:
+    """
+    Round-level normalization of game-outcome meta signal so the model optimizes
+    relative performance over many games (less single-game luck noise).
+    """
+    if not transitions:
+        return transitions
+    raw_meta = [float(t.meta_advantage) for t in transitions]
+    norm_meta = _normalize_signal(raw_meta)
+    return [
+        t._replace(meta_advantage=float(norm_meta[i]))
+        for i, t in enumerate(transitions)
+    ]
+
+
+def _compose_meta_signal(
+    contract_outcome: float,
+    pts_my_norm: float,
+    pts_opp_norm: float,
+    margin_weight: float,
+    margin_clip: float,
+) -> float:
+    """
+    Final meta target:
+    - contract_outcome (bid/schwarz-aware) remains primary
+    - plus a smaller relative point-margin term to reward outpacing opponents
+    """
+    margin = float(pts_my_norm) - float(pts_opp_norm)
+    clip = max(0.0, float(margin_clip))
+    if clip > 0.0:
+        margin = max(-clip, min(clip, margin))
+    return float(contract_outcome) + float(margin_weight) * margin
+
+
+def _episode_norm_points_from_transitions(transitions: list[Transition]) -> tuple[float, float]:
+    """
+    Extract per-episode normalized team points from transitions.
+    We store pts_my/pts_opp per transition as episode-level constants.
+    """
+    if not transitions:
+        return 0.0, 0.0
+    first = transitions[0]
+    return float(first.pts_my), float(first.pts_opp)
+
+
+def _compute_series_signals_norm(
+    episode_totals_norm: list[tuple[float, float]],
+    *,
+    series_target_points_norm: float,
+    series_max_games: int,
+    series_diff_bonus_frac: float,
+    series_total_weight: float,
+    series_diff_weight: float,
+) -> list[float]:
+    """
+    Compute per-episode long-horizon series signals (from POV perspective).
+
+    Series rule:
+    - Match ends as soon as one side reaches target points.
+    - Otherwise, after N games: apply ±(diff * bonus_frac) to winner/loser.
+    - Final signal blends absolute own total and relative diff.
+    """
+    n = len(episode_totals_norm)
+    if n == 0:
+        return []
+
+    target = max(1e-8, float(series_target_points_norm))
+    max_games = max(1, int(series_max_games))
+    bonus_frac = max(0.0, float(series_diff_bonus_frac))
+    w_total = float(series_total_weight)
+    w_diff = float(series_diff_weight)
+
+    out = [0.0] * n
+    seg_start = 0
+    cum_my = 0.0
+    cum_opp = 0.0
+    seg_games = 0
+
+    for idx, (my_pts, opp_pts) in enumerate(episode_totals_norm):
+        cum_my += float(my_pts)
+        cum_opp += float(opp_pts)
+        seg_games += 1
+
+        reached_target = (cum_my >= target) or (cum_opp >= target)
+        capped_by_games = seg_games >= max_games
+        is_last = idx == (n - 1)
+        close_segment = reached_target or capped_by_games or is_last
+        if not close_segment:
+            continue
+
+        eval_my = cum_my
+        eval_opp = cum_opp
+        if capped_by_games and (not reached_target):
+            diff = abs(eval_my - eval_opp)
+            bonus = diff * bonus_frac
+            if eval_my > eval_opp:
+                eval_my += bonus
+                eval_opp -= bonus
+            elif eval_opp > eval_my:
+                eval_opp += bonus
+                eval_my -= bonus
+
+        series_signal = (w_total * eval_my) + (w_diff * (eval_my - eval_opp))
+        for j in range(seg_start, idx + 1):
+            out[j] = float(series_signal)
+
+        seg_start = idx + 1
+        cum_my = 0.0
+        cum_opp = 0.0
+        seg_games = 0
+
+    return out
+
+
+def _apply_series_meta_to_episodes(
+    episode_transitions: list[list[Transition]],
+    *,
+    points_normalizer: float,
+    series_target_points: float,
+    series_max_games: int,
+    series_diff_bonus_frac: float,
+    series_total_weight: float,
+    series_diff_weight: float,
+    series_blend_weight: float,
+) -> list[list[Transition]]:
+    """
+    Blend per-episode meta signal with a long-horizon series signal.
+    """
+    if not episode_transitions:
+        return episode_transitions
+
+    scale = max(1e-8, float(points_normalizer))
+    target_norm = float(series_target_points) / scale
+
+    totals_norm = [
+        _episode_norm_points_from_transitions(eps)
+        for eps in episode_transitions
+    ]
+    series_raw = _compute_series_signals_norm(
+        totals_norm,
+        series_target_points_norm=target_norm,
+        series_max_games=series_max_games,
+        series_diff_bonus_frac=series_diff_bonus_frac,
+        series_total_weight=series_total_weight,
+        series_diff_weight=series_diff_weight,
+    )
+    if not series_raw:
+        return episode_transitions
+
+    mix = max(0.0, min(1.0, float(series_blend_weight)))
+    out: list[list[Transition]] = []
+    for i, eps in enumerate(episode_transitions):
+        if not eps:
+            out.append(eps)
+            continue
+        series_sig = float(series_raw[i])
+        base_sig = float(eps[0].meta_advantage)
+        merged = (1.0 - mix) * base_sig + mix * series_sig
+        out.append([t._replace(meta_advantage=merged) for t in eps])
+    return out
 
 
 def atomic_torch_save(payload: Any, path: Path, retries: int = 5, delay_s: float = 0.05) -> None:
@@ -184,6 +402,44 @@ def atomic_torch_save(payload: Any, path: Path, retries: int = 5, delay_s: float
     raise RuntimeError(f"Failed to atomically save checkpoint to {path}: {last_err}")
 
 
+def _save_phase_completion_checkpoint(
+    model,
+    model_meta: dict[str, Any],
+    ckpt_dir: Path,
+    phase: str,
+    round_idx_1based: int,
+) -> list[Path]:
+    phase_file_map = {
+        "trick": "phase_gameplay_complete.pt",
+        "passing": "phase_passing_complete.pt",
+        "bidding_prop": "phase_bidding_complete.pt",
+        "full_game": "phase_full_game_complete.pt",
+    }
+    payload = build_checkpoint_payload(
+        model,
+        metadata={
+            **model_meta,
+            "schema_version": SUPPORTED_OBS_SCHEMA_VERSION,
+            "action_encoding_version": 1,
+            "action_feat_dim": ACTION_FEAT_DIM,
+        },
+        extra_metadata={
+            "checkpoint_kind": "phase_complete",
+            "phase": phase,
+            "round": int(round_idx_1based),
+        },
+    )
+    saved_paths: list[Path] = []
+    stable_name = phase_file_map.get(phase, f"phase_{phase}_complete.pt")
+    stable_path = ckpt_dir / stable_name
+    round_path = ckpt_dir / f"phase_{phase}_complete_round_{round_idx_1based}.pt"
+    atomic_torch_save(payload, stable_path)
+    atomic_torch_save(payload, round_path)
+    saved_paths.append(stable_path)
+    saved_paths.append(round_path)
+    return saved_paths
+
+
 def run_episode(
     env: MarjapussiEnv,
     model,
@@ -203,6 +459,8 @@ def run_episode(
     max_pass_adv_calls_per_episode: int = 4,
     max_info_adv_calls_per_episode: int = 2,
     reward_cfg: RewardConfig = RewardConfig(),
+    full_game_meta_margin_weight: float = 0.20,
+    full_game_meta_margin_clip: float = 1.0,
 ) -> list[Transition]:
     """
     Play one complete game and return training transitions for POV-controlled decisions only.
@@ -346,7 +604,7 @@ def run_episode(
 
         pov_party = env.pov % 2
         if info and "team_points" in info:
-            pts_my, pts_opp = pov_team_points(info, pov_party)
+            pts_my, pts_opp = pov_team_points_evaluated(info, pov_party)
             pts_my_norm = pts_my / reward_cfg.points_normalizer
             pts_opp_norm = pts_opp / reward_cfg.points_normalizer
             terminal_diff, tricks_party_0, tricks_party_1, playing_party = contract_reward_from_pov(
@@ -359,6 +617,14 @@ def run_episode(
             tricks_party_0 = 0
             tricks_party_1 = 0
             playing_party = None
+
+        meta_signal = _compose_meta_signal(
+            contract_outcome=terminal_diff,
+            pts_my_norm=pts_my_norm,
+            pts_opp_norm=pts_opp_norm,
+            margin_weight=full_game_meta_margin_weight,
+            margin_clip=full_game_meta_margin_clip,
+        )
 
         if not transitions:
             return []
@@ -412,6 +678,7 @@ def run_episode(
                 t.log_prob,
                 t.is_forced,
                 t.imm_r,
+                meta_signal,
             ))
 
         return out_transitions
@@ -468,6 +735,7 @@ def collate(transitions: list[Transition], device: str):
         "action_mask": am.to(device, non_blocking=True),
         "action_idx":  ai.to(device, non_blocking=True),
         "advantage":   torch.tensor([t.advantage for t in transitions]).to(device, non_blocking=True),
+        "meta_advantage": torch.tensor([t.meta_advantage for t in transitions]).to(device, non_blocking=True),
         "value":       torch.tensor([t.value for t in transitions]).to(device, non_blocking=True),
         "log_prob_old":torch.tensor([t.log_prob for t in transitions]).to(device, non_blocking=True),
         "is_forced":   torch.tensor([float(t.is_forced) for t in transitions]).to(device, non_blocking=True),
@@ -530,7 +798,7 @@ def train_online(
     lr: float           = 3e-4,
     device: str         = "cpu",
     checkpoint: str | None = None,
-    model_family: str = "legacy",
+    model_family: str = "parallel_v2",
     model_config: str | None = None,
     strict_param_budget: int | None = None,
     eval_every: int     = 10,
@@ -560,6 +828,31 @@ def train_online(
     forced_imitation_bid_mult: float = 1.5,
     forced_imitation_pass_mult: float = 2.5,
     forced_imitation_decay_rounds: int = 128,
+    full_game_meta_adv_weight: float = 0.85,
+    bidding_meta_adv_weight: float = 0.35,
+    full_game_meta_margin_weight: float = 0.20,
+    full_game_meta_margin_clip: float = 1.0,
+    series_target_points: float = 500.0,
+    series_max_games: int = 8,
+    series_diff_bonus_frac: float = 0.20,
+    series_total_weight: float = 0.15,
+    series_diff_weight: float = 1.0,
+    series_blend_weight_full_game: float = 0.70,
+    series_blend_weight_bidding: float = 0.35,
+    trick_phase_frac: float = 0.50,
+    passing_phase_frac: float = 0.05,
+    bidding_phase_frac: float = 0.05,
+    phase_trick_games_per_round: int = 0,
+    phase_passing_games_per_round: int = 0,
+    phase_bidding_games_per_round: int = 0,
+    phase_full_games_per_round: int = 0,
+    phase_trick_train_batch: int = 0,
+    phase_passing_train_batch: int = 0,
+    phase_bidding_train_batch: int = 0,
+    phase_full_train_batch: int = 0,
+    phase_loss_patience: int = 0,
+    phase_loss_min_delta: float = 0.01,
+    phase_min_rounds_frac: float = 0.50,
     named_checkpoint: str | None = None,
     points_normalizer: float = 420.0,
     passgame_base_reward: float = 115.0 / 420.0,
@@ -645,6 +938,22 @@ def train_online(
         f"decay_rounds={forced_imitation_decay_rounds}"
     )
     Log.info(
+        f"Meta advantage blend weights: full_game={full_game_meta_adv_weight:.2f}, "
+        f"bidding={bidding_meta_adv_weight:.2f}"
+    )
+    Log.info(
+        "Full-game meta terms: "
+        f"contract_weight=1.00, margin_weight={full_game_meta_margin_weight:.2f}, "
+        f"margin_clip={full_game_meta_margin_clip:.2f}"
+    )
+    Log.info(
+        "Series meta rule: "
+        f"target={series_target_points:.0f}, max_games={series_max_games}, "
+        f"bonus_frac={series_diff_bonus_frac:.2f}, "
+        f"signal=(total*{series_total_weight:.2f} + diff*{series_diff_weight:.2f}), "
+        f"blend_full={series_blend_weight_full_game:.2f}, blend_bidding={series_blend_weight_bidding:.2f}"
+    )
+    Log.info(
         f"Reward knobs: points_norm={reward_cfg.points_normalizer:.1f}, "
         f"passgame_base={reward_cfg.passgame_base_reward:.4f}, "
         f"step_delta_scale={reward_cfg.step_delta_scale:.6f}"
@@ -661,17 +970,106 @@ def train_online(
     best_diff = -9999.0
     train_start = time.time()
     total_rounds = max(1, rounds - start_round)
+    phase_plan = _build_phase_plan(
+        total_rounds=total_rounds,
+        trick_frac=trick_phase_frac,
+        passing_frac=passing_phase_frac,
+        bidding_frac=bidding_phase_frac,
+    )
+    Log.info(
+        "Phase plan (max rounds): "
+        f"trick={phase_plan['trick']}, "
+        f"passing={phase_plan['passing']}, "
+        f"bidding={phase_plan['bidding_prop']}, "
+        f"full_game={phase_plan['full_game']}"
+    )
+    if any(v > 0 for v in (
+        phase_trick_games_per_round,
+        phase_passing_games_per_round,
+        phase_bidding_games_per_round,
+        phase_full_games_per_round,
+    )):
+        Log.info(
+            "Per-phase games/round overrides: "
+            f"trick={phase_trick_games_per_round or games_per_round}, "
+            f"passing={phase_passing_games_per_round or games_per_round}, "
+            f"bidding={phase_bidding_games_per_round or games_per_round}, "
+            f"full={phase_full_games_per_round or games_per_round}"
+        )
+    if any(v > 0 for v in (
+        phase_trick_train_batch,
+        phase_passing_train_batch,
+        phase_bidding_train_batch,
+        phase_full_train_batch,
+    )):
+        Log.info(
+            "Per-phase train-batch overrides: "
+            f"trick={phase_trick_train_batch or train_batch}, "
+            f"passing={phase_passing_train_batch or train_batch}, "
+            f"bidding={phase_bidding_train_batch or train_batch}, "
+            f"full={phase_full_train_batch or train_batch}"
+        )
+    if phase_loss_patience > 0:
+        Log.info(
+            "Phase early-transition: "
+            f"patience={phase_loss_patience}, min_delta={phase_loss_min_delta:.4f}, "
+            f"min_round_frac={phase_min_rounds_frac:.2f}"
+        )
+    phase_idx = 0
+    phase_local_round = 0
+    phase_no_improve = 0
+    phase_best_loss = float("inf")
+    phase_end_logged: set[str] = set()
+    games_played_total = 0
 
     for rnd in range(start_round, rounds):
         t0 = time.time()
         local_round = (rnd - start_round) + 1
         stage = 0 if rnd < 3 else 1   # first 3 rounds: heuristic bootstrap
 
+        # Advance phase pointer if current phase is empty/exhausted.
+        while phase_idx < (len(PHASE_ORDER) - 1):
+            cur_phase = PHASE_ORDER[phase_idx]
+            max_rounds = int(phase_plan.get(cur_phase, 0))
+            if max_rounds <= 0 or phase_local_round >= max_rounds:
+                if cur_phase not in phase_end_logged:
+                    for p in _save_phase_completion_checkpoint(model, model_meta, ckpt_dir, cur_phase, rnd + 1):
+                        Log.info(f"Phase checkpoint saved: {p}")
+                    phase_end_logged.add(cur_phase)
+                phase_idx += 1
+                phase_local_round = 0
+                phase_no_improve = 0
+                phase_best_loss = float("inf")
+                continue
+            break
+
+        train_phase = PHASE_ORDER[min(phase_idx, len(PHASE_ORDER) - 1)]
+        phase_local_round += 1
+        curriculum_trick = _phase_start_trick(train_phase, phase_local_round)
+        round_games = _phase_override(
+            games_per_round,
+            {
+                "trick": phase_trick_games_per_round,
+                "passing": phase_passing_games_per_round,
+                "bidding_prop": phase_bidding_games_per_round,
+                "full_game": phase_full_games_per_round,
+            }.get(train_phase, 0),
+        )
+        round_train_batch = _phase_override(
+            train_batch,
+            {
+                "trick": phase_trick_train_batch,
+                "passing": phase_passing_train_batch,
+                "bidding_prop": phase_bidding_train_batch,
+                "full_game": phase_full_train_batch,
+            }.get(train_phase, 0),
+        )
+
         # ── Collect games in parallel via threads ────────────────────────────
         Log.phase(f"Round {rnd+1}/{rounds}: Simulation")
         print(f"\033[94m[SIM]\033[0m Starting simulation with {workers} workers...", flush=True)
         sim_model, _ = create_model(
-            model_family=model_meta.get("model_family", "legacy"),
+            model_family=model_meta.get("model_family", "parallel_v2"),
             model_config_path=model_meta.get("model_config_path"),
             strict_param_budget=strict_param_budget,
         )
@@ -683,9 +1081,8 @@ def train_online(
         pool_envs = EnvPool(workers, include_labels=True)
         all_transitions: list[Transition] = []
 
-        # Curriculum logic
-        progress = rnd / max(1, rounds)
-        train_phase, curriculum_trick = _select_curriculum(progress, rnd)
+        # Curriculum/forcing logic
+        progress = local_round / max(1, total_rounds)
         
         completed_games = 0
         progress_lock = threading.Lock()
@@ -709,7 +1106,9 @@ def train_online(
                                   max_adv_calls_per_episode=max_adv_calls_per_episode,
                                   max_pass_adv_calls_per_episode=max_pass_adv_calls_per_episode,
                                   max_info_adv_calls_per_episode=max_info_adv_calls_per_episode,
-                                  reward_cfg=reward_cfg)
+                                  reward_cfg=reward_cfg,
+                                  full_game_meta_margin_weight=full_game_meta_margin_weight,
+                                  full_game_meta_margin_clip=full_game_meta_margin_clip)
             finally:
                 if not env.is_alive():
                     rc = env.return_code()
@@ -727,14 +1126,14 @@ def train_online(
             nonlocal completed_games
             with progress_lock:
                 completed_games += 1
-                if completed_games % 1 == 0 or completed_games == games_per_round:
+                if completed_games % 1 == 0 or completed_games == round_games:
                     elapsed = time.time() - t0
                     gps = completed_games / max(elapsed, 0.1)
-                    games_left = max(0, games_per_round - completed_games)
+                    games_left = max(0, round_games - completed_games)
                     eta_games = games_left / max(gps, 1e-6)
                     Log.sim(
                         f"Round {rnd+1}/{rounds} | "
-                        f"Progress: {completed_games}/{games_per_round} ({gps:.1f} games/s) | "
+                        f"Progress: {completed_games}/{round_games} ({gps:.1f} games/s) | "
                         f"ETA: {_format_eta(eta_games)} | "
                         f"TargetTrick: {curriculum_trick if curriculum_trick is not None else 'full'}",
                         end=""
@@ -742,13 +1141,34 @@ def train_online(
             return res
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            results = list(pool.map(collect_one, range(games_per_round)))
+            results = list(pool.map(collect_one, range(round_games)))
         print() # Newline after progress bar
         server.stop()
         pool_envs.close()
 
+        if train_phase in ("bidding_prop", "full_game"):
+            blend = (
+                series_blend_weight_bidding
+                if train_phase == "bidding_prop"
+                else series_blend_weight_full_game
+            )
+            results = _apply_series_meta_to_episodes(
+                results,
+                points_normalizer=reward_cfg.points_normalizer,
+                series_target_points=series_target_points,
+                series_max_games=series_max_games,
+                series_diff_bonus_frac=series_diff_bonus_frac,
+                series_total_weight=series_total_weight,
+                series_diff_weight=series_diff_weight,
+                series_blend_weight=blend,
+            )
+
         for eps in results:
             all_transitions.extend(eps)
+        games_played_total += int(round_games)
+
+        if train_phase in ("bidding_prop", "full_game"):
+            all_transitions = _apply_round_meta_advantages(all_transitions)
 
         random.shuffle(all_transitions)
         n_trans = len(all_transitions)
@@ -776,8 +1196,8 @@ def train_online(
             epoch_steps = 0
 
             random.shuffle(all_transitions)
-            for start in range(0, n_trans, train_batch):
-                chunk = all_transitions[start:start + train_batch]
+            for start in range(0, n_trans, round_train_batch):
+                chunk = all_transitions[start:start + round_train_batch]
                 batch = collate(chunk, device)
                 if batch is None: continue
                 losses = train_step(
@@ -799,6 +1219,8 @@ def train_online(
                     ),
                     forced_imitation_bid_mult=forced_imitation_bid_mult,
                     forced_imitation_pass_mult=forced_imitation_pass_mult,
+                    full_game_meta_adv_weight=full_game_meta_adv_weight,
+                    bidding_meta_adv_weight=bidding_meta_adv_weight,
                 )
                 if not math.isfinite(float(losses.get("total", float("nan")))):
                     invalid_batch_detected = True
@@ -809,7 +1231,7 @@ def train_online(
                 n_steps += 1
                 epoch_steps += 1
                 if n_steps % 10 == 0:
-                    prog = min(1.0, (start + train_batch) / n_trans)
+                    prog = min(1.0, (start + round_train_batch) / n_trans)
                     epoch_label = f"{epoch+1}/{max_epochs}"
                     Log.opt(f"Optimizing Round Batch (Epoch {epoch_label}): {prog:.1%}", end="")
             if invalid_batch_detected:
@@ -860,26 +1282,70 @@ def train_online(
 
         # ── Summary ──────────────────────────────────────────────────────────
         policy_label = "heuristic" if stage == 0 else f"model-v{rnd+1}"
-        rate = games_per_round / gen_time
+        rate = round_games / gen_time
         Log.success(f"Round {rnd+1:3d} Summary:")
         elapsed_run = time.time() - train_start
         avg_round_time = elapsed_run / max(local_round, 1)
         rounds_left = max(0, total_rounds - local_round)
         eta_run = avg_round_time * rounds_left
         print(f"  - Policy:   {policy_label}")
+        print(f"  - Phase:    {train_phase} ({phase_local_round}/{max(1, int(phase_plan.get(train_phase, 0)) or phase_local_round)})")
         print(f"  - Round:    {rnd+1}/{rounds} (local {local_round}/{total_rounds})")
         print(f"  - RunETA:   {_format_eta(eta_run)} remaining (elapsed {_format_eta(elapsed_run)})")
-        print(f"  - Games:    {games_per_round} ({rate:.1f} games/s)")
+        print(f"  - Games:    {round_games} ({rate:.1f} games/s)")
         print(f"  - Samples:  {n_trans} transitions")
+        print(f"  - TrainBatch:{round_train_batch}")
         print(f"  - OptEpochs:{epoch}")
         print(f"  - Losses:   Total: {avg_loss.get('total',0):.4f} | Pol: {avg_loss.get('policy',0):.4f} | Imit: {avg_loss.get('forced_imitation',0):.4f} | Val: {avg_loss.get('value',0):.4f} | Ent: {avg_loss.get('entropy',0):.4f} | Pts: {avg_loss.get('pts',0):.4f} | Hidden: {avg_loss.get('hidden',0):.4f} | KL: {avg_loss.get('approx_kl',0):.4f} | Clip: {avg_loss.get('clipfrac',0):.3f}")
         print(f"  - HiddenAux: PosBCE: {avg_loss.get('hidden_pos_loss',0):.4f} | KnownBCE: {avg_loss.get('hidden_known_loss',0):.4f} | ImpBCE: {avg_loss.get('hidden_impossible_loss',0):.4f} | Count: {avg_loss.get('hidden_count_loss',0):.4f} | Exclusive: {avg_loss.get('hidden_exclusive_loss',0):.4f}")
         print(f"  - HiddenQ:   PosAcc: {avg_loss.get('hidden_pos_acc',0):.3f} | KnownAcc: {avg_loss.get('hidden_known_acc',0):.3f} | ExclusiveAcc: {avg_loss.get('hidden_exclusive_acc',0):.3f} | ImpossibleMass: {avg_loss.get('impossible_mass',0):.3f}")
         print(f"  - Time:     Sim: {gen_time:.1f}s | Opt: {train_time:.1f}s")
 
-        log_entry = {"round": rnd+1, "stage": stage, "n_games": games_per_round,
+        log_entry = {"round": rnd+1, "stage": stage, "phase": train_phase, "n_games": round_games,
                      "n_transitions": n_trans, "losses": avg_loss, "opt_epochs": epoch,
                      "gen_secs": gen_time, "train_secs": train_time}
+
+        # Optional phase-level convergence transition.
+        phase_completed = False
+        phase_complete_reason = ""
+        max_phase_rounds = int(phase_plan.get(train_phase, 0))
+        if max_phase_rounds > 0 and phase_idx < (len(PHASE_ORDER) - 1) and phase_local_round >= max_phase_rounds:
+            phase_completed = True
+            phase_complete_reason = "planned round budget reached"
+
+        if (
+            not phase_completed
+            and phase_loss_patience > 0
+            and phase_idx < (len(PHASE_ORDER) - 1)
+        ):
+            cur_total_loss = float(avg_loss.get("total", float("inf")))
+            frac = max(0.0, min(1.0, float(phase_min_rounds_frac)))
+            min_phase_rounds = max(1, int(math.ceil(max(1, max_phase_rounds) * frac)))
+            if phase_local_round >= min_phase_rounds:
+                if cur_total_loss + float(phase_loss_min_delta) < phase_best_loss:
+                    phase_best_loss = cur_total_loss
+                    phase_no_improve = 0
+                else:
+                    phase_no_improve += 1
+                if phase_no_improve >= int(phase_loss_patience):
+                    phase_completed = True
+                    phase_complete_reason = (
+                        f"loss converged (no_improve={phase_no_improve}, "
+                        f"min_delta={phase_loss_min_delta:.4f})"
+                    )
+            else:
+                if cur_total_loss + float(phase_loss_min_delta) < phase_best_loss:
+                    phase_best_loss = cur_total_loss
+
+        if phase_completed and train_phase not in phase_end_logged:
+            for p in _save_phase_completion_checkpoint(model, model_meta, ckpt_dir, train_phase, rnd + 1):
+                Log.info(f"Phase checkpoint saved: {p}")
+            phase_end_logged.add(train_phase)
+            Log.info(f"Phase '{train_phase}' completed at round {rnd+1}: {phase_complete_reason}")
+            phase_idx = min(phase_idx + 1, len(PHASE_ORDER) - 1)
+            phase_local_round = 0
+            phase_no_improve = 0
+            phase_best_loss = float("inf")
 
         # ── Evaluate + checkpoint ────────────────────────────────────────────
         if (rnd + 1) % eval_every == 0 and stage == 1:
@@ -927,7 +1393,7 @@ def train_online(
                 
         # 50k games checkpoint (250 rounds * 200 games/round)
         if (rnd + 1) % 250 == 0:
-            games_played = (rnd + 1) * games_per_round
+            games_played = int(games_played_total)
             ckpt_name = f"model_{games_played // 1000}k.pt"
             atomic_torch_save(
                 build_checkpoint_payload(
@@ -979,6 +1445,13 @@ def train_online(
         if device == "cuda":
             torch.cuda.empty_cache()
 
+    # Ensure final phase completion checkpoint exists.
+    final_phase = PHASE_ORDER[min(phase_idx, len(PHASE_ORDER) - 1)]
+    if final_phase not in phase_end_logged:
+        for p in _save_phase_completion_checkpoint(model, model_meta, ckpt_dir, final_phase, rounds):
+            Log.info(f"Phase checkpoint saved: {p}")
+        phase_end_logged.add(final_phase)
+
     Log.success(f"Done. Best test point diff: {best_diff:+.1f}")
     Log.info(f"Checkpoint: {ckpt_dir / 'latest.pt'}")
     if named_ckpt_path is not None:
@@ -997,7 +1470,7 @@ if __name__ == "__main__":
     p.add_argument("--train-batch",      type=int,   default=192,
                    help="Batch size for training optimization step")
     p.add_argument("--lr",               type=float, default=3e-4)
-    p.add_argument("--model-family",     choices=["legacy", "parallel_v2"], default="legacy",
+    p.add_argument("--model-family",     choices=["legacy", "parallel_v2"], default="parallel_v2",
                    help="Model family for training/inference")
     p.add_argument("--model-config",     default=None,
                    help="Optional model config path (used by parallel_v2)")
@@ -1044,6 +1517,34 @@ if __name__ == "__main__":
                    help="Force heuristic passing for progress ratio < this value")
     p.add_argument("--force-bidding-until-progress", type=float, default=0.90,
                    help="Force heuristic bidding for progress ratio < this value")
+    p.add_argument("--trick-phase-frac", type=float, default=0.50,
+                   help="Fraction of rounds allocated to trick-play curriculum phase")
+    p.add_argument("--passing-phase-frac", type=float, default=0.05,
+                   help="Fraction of rounds allocated to passing-focused phase")
+    p.add_argument("--bidding-phase-frac", type=float, default=0.05,
+                   help="Fraction of rounds allocated to bidding-focused phase")
+    p.add_argument("--phase-trick-games-per-round", type=int, default=0,
+                   help="Override games/round for trick phase (0 uses --games-per-round)")
+    p.add_argument("--phase-passing-games-per-round", type=int, default=0,
+                   help="Override games/round for passing phase (0 uses --games-per-round)")
+    p.add_argument("--phase-bidding-games-per-round", type=int, default=0,
+                   help="Override games/round for bidding phase (0 uses --games-per-round)")
+    p.add_argument("--phase-full-games-per-round", type=int, default=0,
+                   help="Override games/round for full-game phase (0 uses --games-per-round)")
+    p.add_argument("--phase-trick-train-batch", type=int, default=0,
+                   help="Override train batch for trick phase (0 uses --train-batch)")
+    p.add_argument("--phase-passing-train-batch", type=int, default=0,
+                   help="Override train batch for passing phase (0 uses --train-batch)")
+    p.add_argument("--phase-bidding-train-batch", type=int, default=0,
+                   help="Override train batch for bidding phase (0 uses --train-batch)")
+    p.add_argument("--phase-full-train-batch", type=int, default=0,
+                   help="Override train batch for full-game phase (0 uses --train-batch)")
+    p.add_argument("--phase-loss-patience", type=int, default=0,
+                   help="If >0, transition to next phase after this many low-improvement rounds")
+    p.add_argument("--phase-loss-min-delta", type=float, default=0.01,
+                   help="Minimum total-loss improvement to reset phase patience")
+    p.add_argument("--phase-min-rounds-frac", type=float, default=0.50,
+                   help="Minimum fraction of planned phase rounds before phase-loss patience can trigger")
     p.add_argument("--hidden-loss-weight", type=float, default=0.3,
                    help="Weight of hidden-hand auxiliary loss in total loss")
     p.add_argument("--impossible-penalty-weight", type=float, default=2.0,
@@ -1062,6 +1563,28 @@ if __name__ == "__main__":
                    help="Extra multiplier for forced imitation on passing actions")
     p.add_argument("--forced-imitation-decay-rounds", type=int, default=128,
                    help="Rounds over which forced-action imitation weight decays")
+    p.add_argument("--full-game-meta-adv-weight", type=float, default=0.85,
+                   help="Blend weight for round-normalized game-outcome meta advantage in full_game phase")
+    p.add_argument("--bidding-meta-adv-weight", type=float, default=0.35,
+                   help="Blend weight for round-normalized meta advantage in bidding_prop phase")
+    p.add_argument("--full-game-meta-margin-weight", type=float, default=0.20,
+                   help="Relative point-margin weight added to contract outcome for full_game meta signal")
+    p.add_argument("--full-game-meta-margin-clip", type=float, default=1.0,
+                   help="Absolute clip for normalized point-margin term in full_game meta signal")
+    p.add_argument("--series-target-points", type=float, default=500.0,
+                   help="Long-horizon meta: first side to this cumulative point target wins a series")
+    p.add_argument("--series-max-games", type=int, default=8,
+                   help="Long-horizon meta: if target not reached, close series after this many games")
+    p.add_argument("--series-diff-bonus-frac", type=float, default=0.20,
+                   help="Long-horizon meta: bonus fraction of series diff applied to winner/loser on max-games close")
+    p.add_argument("--series-total-weight", type=float, default=0.15,
+                   help="Long-horizon meta: weight for absolute own series points in series signal")
+    p.add_argument("--series-diff-weight", type=float, default=1.0,
+                   help="Long-horizon meta: weight for own-vs-opp diff in series signal")
+    p.add_argument("--series-blend-weight-full-game", type=float, default=0.70,
+                   help="Blend factor of series signal into episode meta signal for full_game phase")
+    p.add_argument("--series-blend-weight-bidding", type=float, default=0.35,
+                   help="Blend factor of series signal into episode meta signal for bidding_prop phase")
     p.add_argument("--named-checkpoint", default=None,
                    help="Optional checkpoint filename/path to update every round")
     p.add_argument("--config", default=str(DEFAULT_CONFIG_PATH),
@@ -1113,6 +1636,20 @@ if __name__ == "__main__":
         max_info_adv_calls_per_episode=args.max_info_adv_calls_per_episode,
         force_passing_until_progress=args.force_passing_until_progress,
         force_bidding_until_progress=args.force_bidding_until_progress,
+        trick_phase_frac=args.trick_phase_frac,
+        passing_phase_frac=args.passing_phase_frac,
+        bidding_phase_frac=args.bidding_phase_frac,
+        phase_trick_games_per_round=args.phase_trick_games_per_round,
+        phase_passing_games_per_round=args.phase_passing_games_per_round,
+        phase_bidding_games_per_round=args.phase_bidding_games_per_round,
+        phase_full_games_per_round=args.phase_full_games_per_round,
+        phase_trick_train_batch=args.phase_trick_train_batch,
+        phase_passing_train_batch=args.phase_passing_train_batch,
+        phase_bidding_train_batch=args.phase_bidding_train_batch,
+        phase_full_train_batch=args.phase_full_train_batch,
+        phase_loss_patience=args.phase_loss_patience,
+        phase_loss_min_delta=args.phase_loss_min_delta,
+        phase_min_rounds_frac=args.phase_min_rounds_frac,
         hidden_loss_weight=args.hidden_loss_weight,
         impossible_penalty_weight=args.impossible_penalty_weight,
         hidden_count_weight=args.hidden_count_weight,
@@ -1122,6 +1659,17 @@ if __name__ == "__main__":
         forced_imitation_bid_mult=args.forced_imitation_bid_mult,
         forced_imitation_pass_mult=args.forced_imitation_pass_mult,
         forced_imitation_decay_rounds=args.forced_imitation_decay_rounds,
+        full_game_meta_adv_weight=args.full_game_meta_adv_weight,
+        bidding_meta_adv_weight=args.bidding_meta_adv_weight,
+        full_game_meta_margin_weight=args.full_game_meta_margin_weight,
+        full_game_meta_margin_clip=args.full_game_meta_margin_clip,
+        series_target_points=args.series_target_points,
+        series_max_games=args.series_max_games,
+        series_diff_bonus_frac=args.series_diff_bonus_frac,
+        series_total_weight=args.series_total_weight,
+        series_diff_weight=args.series_diff_weight,
+        series_blend_weight_full_game=args.series_blend_weight_full_game,
+        series_blend_weight_bidding=args.series_blend_weight_bidding,
         named_checkpoint=args.named_checkpoint,
         points_normalizer=args.points_normalizer,
         passgame_base_reward=args.passgame_base_reward,

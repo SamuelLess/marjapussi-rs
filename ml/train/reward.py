@@ -13,10 +13,47 @@ class RewardConfig:
     step_delta_scale: float = 1.0 / 420.0
 
 
+def evaluated_team_points(info: dict) -> tuple[float, float]:
+    """
+    Compute final team points under the project rule-set:
+    - Non-playing party keeps all raw team points it made.
+    - Playing party gets exactly +game_value on success, else -game_value.
+    - Schwarz special-case applies only against the playing party on failure:
+      playing party gets -2 * game_value.
+    - Pass game (no playing_party): raw team points.
+    """
+    team_points = info.get("team_points", [0, 0])
+    raw0 = float(team_points[0])
+    raw1 = float(team_points[1])
+
+    playing_party_raw = info.get("playing_party")
+    if playing_party_raw is None:
+        return raw0, raw1
+
+    playing_party = int(playing_party_raw)
+    opp_party = 1 - playing_party
+    won_contract = bool(info.get("won", False))
+    game_value = float(info.get("game_value", 0))
+    schwarz = bool(info.get("schwarz", False))
+
+    playing_eval = game_value if won_contract else -game_value
+    if (not won_contract) and schwarz:
+        playing_eval = -2.0 * game_value
+
+    if playing_party == 0:
+        return playing_eval, (raw1 if opp_party == 1 else raw0)
+    return (raw0 if opp_party == 0 else raw1), playing_eval
+
+
 def pov_team_points(info: dict, pov_party: int) -> tuple[float, float]:
     team_points = info.get("team_points", [0, 0])
     t0 = float(team_points[0])
     t1 = float(team_points[1])
+    return (t0, t1) if pov_party == 0 else (t1, t0)
+
+
+def pov_team_points_evaluated(info: dict, pov_party: int) -> tuple[float, float]:
+    t0, t1 = evaluated_team_points(info)
     return (t0, t1) if pov_party == 0 else (t1, t0)
 
 
@@ -48,13 +85,6 @@ def contract_reward_from_pov(
             return -cfg.passgame_base_reward, tricks_party_0, tricks_party_1, None
         return 0.0, tricks_party_0, tricks_party_1, None
 
-    game_value = float(info.get("game_value", 0)) / cfg.points_normalizer
-    schwarz_mult = 2.0 if info.get("schwarz", False) else 1.0
-    won_contract = bool(info.get("won", False))
-    is_playing_team = (playing_party_abs == pov_party)
-
-    if won_contract:
-        diff = game_value * schwarz_mult if is_playing_team else -game_value * schwarz_mult
-    else:
-        diff = -game_value * schwarz_mult if is_playing_team else game_value * schwarz_mult
-    return diff, tricks_party_0, tricks_party_1, playing_party_abs
+    pov_eval, _opp_eval = pov_team_points_evaluated(info, pov_party)
+    total = pov_eval / cfg.points_normalizer
+    return total, tricks_party_0, tricks_party_1, playing_party_abs

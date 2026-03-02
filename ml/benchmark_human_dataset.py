@@ -119,7 +119,7 @@ def resolve_model_spec(
     override_config: str | None,
 ) -> tuple[str, str | None]:
     _, ck_meta, _ = parse_checkpoint(ckpt_path, map_location="cpu")
-    family = override_family or str(ck_meta.get("model_family", "legacy"))
+    family = override_family or str(ck_meta.get("model_family", "parallel_v2"))
     config = override_config if override_config is not None else ck_meta.get("model_config_path")
     return family, config
 

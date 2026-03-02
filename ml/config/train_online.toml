@@ -8,7 +8,8 @@ workers = 8
 mc_rollouts = 4
 train_batch = 192
 lr = 0.0003
-# model_family = "legacy"
+# Defaults are parallel_v2; keep these explicit if you want pinned reproducibility:
+# model_family = "parallel_v2"
 # model_config = "ml/config/model_parallel_v2.toml"
 # strict_param_budget = 28000000
 start_round = 0
@@ -37,6 +38,23 @@ max_info_adv_calls_per_episode = 2
 force_passing_until_progress = 0.75
 force_bidding_until_progress = 0.90
 
+# --- Curriculum phase schedule (ratios + optional per-phase overrides) ---
+trick_phase_frac = 0.50
+passing_phase_frac = 0.05
+bidding_phase_frac = 0.05
+# phase_trick_games_per_round = 0
+# phase_passing_games_per_round = 0
+# phase_bidding_games_per_round = 0
+# phase_full_games_per_round = 0
+# phase_trick_train_batch = 0
+# phase_passing_train_batch = 0
+# phase_bidding_train_batch = 0
+# phase_full_train_batch = 0
+# Optional phase-level early transition by loss convergence:
+phase_loss_patience = 0
+phase_loss_min_delta = 0.01
+phase_min_rounds_frac = 0.50
+
 # --- Auxiliary and imitation losses ---
 hidden_loss_weight = 0.3
 impossible_penalty_weight = 2.0
@@ -47,6 +65,21 @@ forced_imitation_weight = 0.5
 forced_imitation_bid_mult = 1.5
 forced_imitation_pass_mult = 2.5
 forced_imitation_decay_rounds = 128
+full_game_meta_adv_weight = 0.85
+bidding_meta_adv_weight = 0.35
+full_game_meta_margin_weight = 0.20
+full_game_meta_margin_clip = 1.0
+# Long-horizon series meta rule:
+# - first side to target points wins series
+# - else close after max games, winner gets +diff*bonus_frac, loser -diff*bonus_frac
+series_target_points = 500.0
+series_max_games = 8
+series_diff_bonus_frac = 0.20
+# Signal blend: series_signal = total_weight*my_total + diff_weight*(my_total-opp_total)
+series_total_weight = 0.15
+series_diff_weight = 1.0
+series_blend_weight_full_game = 0.70
+series_blend_weight_bidding = 0.35
 
 # --- Reward semantics ---
 points_normalizer = 420.0

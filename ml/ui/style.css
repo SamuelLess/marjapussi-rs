@@ -1013,6 +1013,15 @@ body.col-resizing {
   padding: 2px;
 }
 
+#dbg-content .card.dbg-pred-ok {
+  box-shadow: 0 0 0 2px #22c55e;
+}
+
+#dbg-content .card.dbg-pred-wrong {
+  box-shadow: 0 0 0 2px #f87171;
+  background: #fff1f2;
+}
+
 #dbg-content .cv {
   font-size: 10px;
 }

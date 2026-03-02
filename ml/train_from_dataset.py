@@ -37,6 +37,25 @@ from train.utils import Log
 DEFAULT_CKPT_DIR = Path(__file__).parent / "checkpoints"
 
 
+def _cleanup_epoch_checkpoints(ckpt_dir: Path, keep_epoch_checkpoints: int) -> None:
+    keep = max(0, int(keep_epoch_checkpoints))
+    if keep <= 0:
+        return
+    epoch_files = []
+    for p in ckpt_dir.glob("epoch_*.pt"):
+        try:
+            ep = int(p.stem.split("_", 1)[1])
+        except Exception:
+            continue
+        epoch_files.append((ep, p))
+    epoch_files.sort(key=lambda x: x[0])
+    for _, old_path in epoch_files[:-keep]:
+        try:
+            old_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def _format_eta(seconds: float) -> str:
     seconds = max(0, int(seconds))
     h, rem = divmod(seconds, 3600)
@@ -106,7 +125,12 @@ def worker_init(worker_id):
 
 # ── Collation ─────────────────────────────────────────────────────────────────
 
-def collate(records: list[dict], bid_weight: float = 1.0, pass_weight: float = 1.0):
+def collate(
+    records: list[dict],
+    play_weight: float = 1.0,
+    bid_weight: float = 1.0,
+    pass_weight: float = 1.0,
+):
     """Convert a batch of raw records to model tensors. Returns None on empty."""
     valid = []
     for r in records:
@@ -130,8 +154,11 @@ def collate(records: list[dict], bid_weight: float = 1.0, pass_weight: float = 1
             if feats.shape[1] > 0:
                 idx = max(0, min(clamped_a, int(feats.shape[1]) - 1))
                 chosen = feats[0, idx]
+                is_play = float(chosen[0].item()) > 0.5
                 is_bid = float(chosen[1].item()) > 0.5
                 is_pass = (float(chosen[3].item()) > 0.5) or (float(chosen[11].item()) > 0.5)
+                if is_play:
+                    w *= max(1.0, float(play_weight))
                 if is_bid:
                     w *= max(1.0, float(bid_weight))
                 if is_pass:
@@ -187,13 +214,17 @@ def collate(records: list[dict], bid_weight: float = 1.0, pass_weight: float = 1
 def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
           device: str = "cpu", ckpt: str | None = None, workers: int = 4,
           log_every: int = 500, amp: bool = True, max_steps: int = 0,
-          bid_weight: float = 1.0, pass_weight: float = 1.0,
+          play_weight: float = 1.0, bid_weight: float = 1.0, pass_weight: float = 1.0,
+          stage_label: str = "",
+          save_every_epochs: int = 16,
+          keep_epoch_checkpoints: int = 8,
+          save_best_checkpoint: bool = True,
           outcome_weight_alpha: float = 0.0,
           phase_balance_strength: float = 1.0,
           min_epochs: int = 1,
           target_bc_loss: float = 0.0,
           target_bc_streak: int = 2,
-          model_family: str = "legacy", model_config: str | None = None,
+          model_family: str = "parallel_v2", model_config: str | None = None,
           strict_param_budget: int | None = None,
           lr_schedule: str = "plateau", lr_min: float = 1e-5,
           lr_warmup_steps: int = 128,
@@ -210,11 +241,14 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
         strict_param_budget=strict_param_budget,
     )
     model = model.to(device)
+    stage = (stage_label or "").strip()
+    stage_prefix = f"[{stage}] " if stage else ""
     Log.success(
-        f"Supervised pretraining | epochs={epochs} | batch={batch} | workers={workers} | device={device} | family={model_meta.get('model_family')}"
+        f"{stage_prefix}Supervised pretraining | epochs={epochs} | batch={batch} | workers={workers} | device={device} | family={model_meta.get('model_family')}"
     )
+    Log.info(f"{stage_prefix}Dataset path: {data_path}")
     Log.info(
-        f"Phase/action emphasis: bid_weight={bid_weight:.2f}, pass_weight={pass_weight:.2f}"
+        f"Phase/action emphasis: play_weight={play_weight:.2f}, bid_weight={bid_weight:.2f}, pass_weight={pass_weight:.2f}"
     )
     Log.info(
         f"Supervised target mode: pure BC + outcome_weight_alpha={outcome_weight_alpha:.2f}"
@@ -286,13 +320,21 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
         f"warmup_steps={max(0, int(lr_warmup_steps))}"
     )
     progress_interval = max(1, min(log_every, max(1, steps_per_epoch // 8)))
+    save_every_epochs = max(1, int(save_every_epochs))
+    keep_epoch_checkpoints = max(0, int(keep_epoch_checkpoints))
+    best_bc = float("inf")
 
     global_step = 0
     bc_target_hits = 0
     for epoch in range(epochs):
-        Log.phase(f"Epoch {epoch+1}/{epochs}: Pretraining")
+        Log.phase(f"{stage_prefix}Epoch {epoch+1}/{epochs}: Pretraining")
         ds = NdJsonDataset(data_path, shuffle_buf=min(100_000, batch * 200), epochs=1)
-        collate_fn = partial(collate, bid_weight=bid_weight, pass_weight=pass_weight)
+        collate_fn = partial(
+            collate,
+            play_weight=play_weight,
+            bid_weight=bid_weight,
+            pass_weight=pass_weight,
+        )
         loader = DataLoader(ds, batch_size=batch, collate_fn=collate_fn,
                             num_workers=workers, worker_init_fn=worker_init,
                             pin_memory=(device != "cpu"),
@@ -417,6 +459,25 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
         avg_loss = sum_loss / max(1, step)
         avg_bc = sum_bc / max(1, step)
         avg_pts = sum_pts / max(1, step)
+        should_stop_for_target = False
+        if target_bc_enabled:
+            reached_min_epochs = (epoch + 1) >= min_epochs
+            is_good_epoch = avg_bc <= target_bc_loss
+            if reached_min_epochs and is_good_epoch:
+                bc_target_hits += 1
+                Log.info(
+                    f"BC target hit {bc_target_hits}/{target_bc_streak}: "
+                    f"{avg_bc:.4f} <= {target_bc_loss:.4f}"
+                )
+                if bc_target_hits >= target_bc_streak:
+                    should_stop_for_target = True
+            else:
+                if reached_min_epochs and bc_target_hits > 0:
+                    Log.info(
+                        f"BC target streak reset ({avg_bc:.4f} > {target_bc_loss:.4f})."
+                    )
+                bc_target_hits = 0
+
         payload = build_checkpoint_payload(
             model,
             metadata={
@@ -440,39 +501,45 @@ def train(data_path: str, epochs: int = 3, batch: int = 1024, lr: float = 3e-4,
                     f"LR reduced on plateau: {lr_before:.2e} -> {lr_after:.2e} "
                     f"(epoch_loss={avg_loss:.4f})"
                 )
-        ckpt_path = ckpt_dir / f"epoch_{epoch+1}.pt"
-        torch.save(payload, ckpt_path)
+
         torch.save(payload, ckpt_dir / "latest.pt")
-        Log.success(f"Epoch {epoch+1} Summary:")
+        saved_paths = [ckpt_dir / "latest.pt"]
+
+        if save_best_checkpoint and avg_bc < best_bc:
+            best_bc = avg_bc
+            best_path = ckpt_dir / "best.pt"
+            torch.save(payload, best_path)
+            saved_paths.append(best_path)
+
+        should_save_epoch = (
+            ((epoch + 1) % save_every_epochs == 0)
+            or ((epoch + 1) == epochs)
+            or stop_early
+            or should_stop_for_target
+        )
+        if should_save_epoch:
+            ckpt_path = ckpt_dir / f"epoch_{epoch+1}.pt"
+            torch.save(payload, ckpt_path)
+            saved_paths.append(ckpt_path)
+            if keep_epoch_checkpoints > 0:
+                _cleanup_epoch_checkpoints(ckpt_dir, keep_epoch_checkpoints)
+
+        Log.success(f"{stage_prefix}Epoch {epoch+1} Summary:")
         print(f"  - Steps:    {step}")
         print(f"  - Losses:   Total: {avg_loss:.4f} | BC: {avg_bc:.4f} | Pts: {avg_pts:.4f}")
         print(f"  - Time:     {epoch_secs:.1f}s")
-        print(f"  - Saved:    {ckpt_path}")
+        print(f"  - Saved:    {', '.join(str(p) for p in saved_paths)}")
+
+        if should_stop_for_target:
+            Log.success(
+                f"Stopping on BC target after epoch {epoch+1}: "
+                f"{avg_bc:.4f} <= {target_bc_loss:.4f}"
+            )
+            break
         if stop_early:
             break
-        if target_bc_enabled:
-            reached_min_epochs = (epoch + 1) >= min_epochs
-            is_good_epoch = avg_bc <= target_bc_loss
-            if reached_min_epochs and is_good_epoch:
-                bc_target_hits += 1
-                Log.info(
-                    f"BC target hit {bc_target_hits}/{target_bc_streak}: "
-                    f"{avg_bc:.4f} <= {target_bc_loss:.4f}"
-                )
-                if bc_target_hits >= target_bc_streak:
-                    Log.success(
-                        f"Stopping on BC target after epoch {epoch+1}: "
-                        f"{avg_bc:.4f} <= {target_bc_loss:.4f}"
-                    )
-                    break
-            else:
-                if reached_min_epochs and bc_target_hits > 0:
-                    Log.info(
-                        f"BC target streak reset ({avg_bc:.4f} > {target_bc_loss:.4f})."
-                    )
-                bc_target_hits = 0
 
-    Log.success("Pretraining complete.")
+    Log.success(f"{stage_prefix}Pretraining complete.")
     Log.info(f"Checkpoint: {ckpt_dir / 'latest.pt'}")
     Log.info(f"Next: python ml/train.py --checkpoint {ckpt_dir / 'latest.pt'}")
 
@@ -486,7 +553,7 @@ if __name__ == "__main__":
     p.add_argument("--device",   default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--workers",  type=int,   default=4,       help="DataLoader workers")
     p.add_argument("--checkpoint", default=None)
-    p.add_argument("--model-family", choices=["legacy", "parallel_v2"], default="legacy",
+    p.add_argument("--model-family", choices=["legacy", "parallel_v2"], default="parallel_v2",
                    help="Model family to train")
     p.add_argument("--model-config", default=None,
                    help="Optional model config path (used by parallel_v2)")
@@ -495,10 +562,20 @@ if __name__ == "__main__":
     p.add_argument("--log-every", type=int,  default=500)
     p.add_argument("--max-steps", type=int, default=0,
                    help="Optional hard cap on optimizer steps (0 = disabled)")
+    p.add_argument("--stage-label", default="",
+                   help="Short label printed in logs to identify pretraining stage")
+    p.add_argument("--save-every-epochs", type=int, default=16,
+                   help="Save numbered epoch checkpoints every N epochs (latest.pt is always updated)")
+    p.add_argument("--keep-epoch-checkpoints", type=int, default=8,
+                   help="Keep at most this many numbered epoch checkpoints (0 disables cleanup)")
+    p.add_argument("--no-save-best-checkpoint", action="store_true",
+                   help="Disable saving best.pt on improved BC loss")
     p.add_argument("--bid-weight", type=float, default=1.0,
                    help="Extra supervised emphasis multiplier for bidding actions")
     p.add_argument("--pass-weight", type=float, default=1.0,
                    help="Extra supervised emphasis multiplier for passing/pick-pass-card actions")
+    p.add_argument("--play-weight", type=float, default=1.0,
+                   help="Extra supervised emphasis multiplier for trick card-play actions")
     p.add_argument("--outcome-weight-alpha", type=float, default=0.0,
                    help="Optional outcome-based weighting in BC (0.0 = pure imitation)")
     p.add_argument("--phase-balance-strength", type=float, default=1.0,
@@ -541,6 +618,11 @@ if __name__ == "__main__":
           strict_param_budget=args.strict_param_budget,
           workers=args.workers, log_every=args.log_every,
           amp=not args.no_amp, max_steps=args.max_steps,
+          stage_label=args.stage_label,
+          save_every_epochs=args.save_every_epochs,
+          keep_epoch_checkpoints=args.keep_epoch_checkpoints,
+          save_best_checkpoint=not args.no_save_best_checkpoint,
+          play_weight=args.play_weight,
           bid_weight=args.bid_weight, pass_weight=args.pass_weight,
           outcome_weight_alpha=args.outcome_weight_alpha,
           phase_balance_strength=args.phase_balance_strength,

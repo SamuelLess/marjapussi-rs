@@ -8,7 +8,7 @@ sys.path.insert(0, str(ROOT))
 
 from env import encode_legal_actions, encode_phase
 from model import ACTION_FEAT_DIM
-from train.reward import RewardConfig, contract_reward_from_pov
+from train.reward import RewardConfig, contract_reward_from_pov, evaluated_team_points
 
 
 class EnvRewardBasicsTest(unittest.TestCase):
@@ -88,6 +88,43 @@ class EnvRewardBasicsTest(unittest.TestCase):
         reward, _, _, playing_party = contract_reward_from_pov(contract_info, pov_party=0, cfg=cfg)
         self.assertEqual(playing_party, 0)
         self.assertAlmostEqual(reward, 140.0 / 420.0, places=6)
+
+    def test_evaluated_team_points_contract_rules(self):
+        # Playing side wins: playing gets exact contract value, defenders keep raw.
+        info_win = {
+            "team_points": [186, 34],
+            "playing_party": 0,
+            "game_value": 135,
+            "won": True,
+            "schwarz": False,
+        }
+        t0, t1 = evaluated_team_points(info_win)
+        self.assertEqual(t0, 135.0)
+        self.assertEqual(t1, 34.0)
+
+        # Playing side loses without schwarz: playing gets -contract, defenders keep raw.
+        info_lose = {
+            "team_points": [62, 158],
+            "playing_party": 0,
+            "game_value": 140,
+            "won": False,
+            "schwarz": False,
+        }
+        t0, t1 = evaluated_team_points(info_lose)
+        self.assertEqual(t0, -140.0)
+        self.assertEqual(t1, 158.0)
+
+        # Schwarz special-case against playing side: playing gets double negative.
+        info_schwarz_lose = {
+            "team_points": [0, 220],
+            "playing_party": 0,
+            "game_value": 120,
+            "won": False,
+            "schwarz": True,
+        }
+        t0, t1 = evaluated_team_points(info_schwarz_lose)
+        self.assertEqual(t0, -240.0)
+        self.assertEqual(t1, 220.0)
 
 
 if __name__ == "__main__":

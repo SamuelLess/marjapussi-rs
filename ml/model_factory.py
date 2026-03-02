@@ -46,11 +46,11 @@ def load_parallel_config(config_path: str | Path | None = None) -> tuple[Paralle
 
 
 def create_model(
-    model_family: str = "legacy",
+    model_family: str = "parallel_v2",
     model_config_path: str | Path | None = None,
     strict_param_budget: int | None = None,
 ) -> tuple[torch.nn.Module, dict[str, Any]]:
-    family = (model_family or "legacy").strip().lower()
+    family = (model_family or "parallel_v2").strip().lower()
     if family not in MODEL_FAMILIES:
         raise ValueError(f"Unsupported model_family={model_family!r}. Expected one of {sorted(MODEL_FAMILIES)}")
 

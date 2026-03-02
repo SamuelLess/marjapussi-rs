@@ -104,6 +104,11 @@ build-human-dataset input="ml/dataset/games.ndjson" output="ml/data/human_datase
     {{ml_convert_bin}} --input {{input}} --output {{output}}
     @{{python}} -c "import json,collections,sys; p='{{output}}'; c=collections.Counter(); n=0; f=open(p,'r',encoding='utf-8'); [c.update([(lambda r: (r['obs'].get('legal_actions',[{}])[min(max(0,int(r.get('action_taken',0))), max(0,len(r['obs'].get('legal_actions',[]))-1))].get('action_token') if r.get('obs',{}).get('legal_actions') else None))(json.loads(line))]) or (n:=n+1) for line in f if line.strip()]; f.close(); print(f'Dataset rows={n} pass_pick(token52)={c.get(52,0)} direct_pass(token43)={c.get(43,0)}'); sys.exit(0 if c.get(52,0)>0 and c.get(43,0)==0 else 2)"
 
+# Convert legacy logs and keep only rows from players with winrate > threshold.
+build-human-dataset-win55 input="ml/dataset/games.ndjson" output="ml/data/human_dataset_win55.ndjson" min_winrate="0.55": ensure-ml-server-release ensure-ml-convert-release
+    {{ml_convert_bin}} --input {{input}} --output {{output}} --min-player-winrate {{min_winrate}}
+    @{{python}} -c "import json,collections,sys; p='{{output}}'; c=collections.Counter(); players=collections.Counter(); n=0; f=open(p,'r',encoding='utf-8'); [players.update([json.loads(line).get('pov_player','?')]) or c.update([(lambda r: (r['obs'].get('legal_actions',[{}])[min(max(0,int(r.get('action_taken',0))), max(0,len(r['obs'].get('legal_actions',[]))-1))].get('action_token') if r.get('obs',{}).get('legal_actions') else None))(json.loads(line))]) or (n:=n+1) for line in f if line.strip()]; f.close(); print(f'Dataset rows={n} unique_players={len(players)} pass_pick(token52)={c.get(52,0)} direct_pass(token43)={c.get(43,0)}'); print('Top players by rows:', ', '.join([f'{k}:{v}' for k,v in players.most_common(8)])); sys.exit(0 if n>0 and c.get(52,0)>0 and c.get(43,0)==0 else 2)"
+
 # Supervised pretraining on converted human data.
 pretrain-human data="ml/data/human_dataset.ndjson" epochs="8" max_steps="2048" checkpoints_dir="ml/checkpoints":
     @echo "Pretraining from human dataset {{data}} using virtual environment python: {{python}}"
@@ -263,6 +268,55 @@ train-65k-human-v2 run_name="v2_human_first_65k": setup-ml build-human-dataset
       {{cuda_alloc_env}} {{python}} ml/train_from_dataset.py --data ml/data/human_dataset.ndjson --epochs 48 --batch 256 --workers 2 --device cuda --max-steps 0 --min-epochs 12 --target-bc-loss 0.235 --target-bc-streak 2 --bid-weight 2.5 --pass-weight 3.0 --lr-schedule plateau --lr 3e-4 --lr-min 6e-5 --lr-warmup-steps 384 --lr-plateau-patience 2 --lr-plateau-factor 0.7 --lr-plateau-threshold 8e-4 --lr-plateau-cooldown 1 {{v2_model_args}} --checkpoints-dir "$run_ckpt"; \
       cp -f "$run_ckpt/latest.pt" "$run_ckpt/$run_label"_pretrain_final.pt; \
       ML_SERVER_BIN="$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 512 --games-per-round 128 --workers 32 --mc-rollouts 4 --device cuda --eval-every 16 --checkpoint "$run_ckpt/$run_label"_pretrain_final.pt --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3 {{v2_model_args}} --named-checkpoint "$run_label"_selfplay_final.pt --checkpoints-dir "$run_ckpt" --runs-dir "$run_logs"; \
+      cp -f "$run_ckpt/best.pt" "$run_ckpt/$run_label"_selfplay_best.pt; \
+      echo "Artifacts root: $run_root"
+
+# Full 65k v2 profile trained only on perspectives of players with winrate > 55%.
+train-65k-human55-v2 run_name="v2_human55_first_65k": setup-ml build-human-dataset-win55
+    @echo "Running full 65k human-first v2 profile on >55% winrate player perspectives..."
+    @run_label="{{run_name}}"; \
+      case "$run_label" in run_name=*) run_label="${run_label#run_name=}" ;; esac; \
+      run_root="ml/runs/$run_label"; \
+      run_ckpt="$run_root/checkpoints"; \
+      run_logs="$run_root/logs"; \
+      run_bin_dir="$run_root/bin"; \
+      run_bin="$run_bin_dir/$(basename "{{ml_server_bin}}")"; \
+      mkdir -p "$run_ckpt" "$run_logs" "$run_bin_dir"; \
+      cp -f "{{ml_server_bin}}" "$run_bin"; \
+      {{cuda_alloc_env}} {{python}} ml/train_from_dataset.py --data ml/data/human_dataset_win55.ndjson --epochs 48 --batch 256 --workers 2 --device cuda --max-steps 0 --min-epochs 12 --target-bc-loss 0.235 --target-bc-streak 2 --play-weight 1.5 --bid-weight 1.5 --pass-weight 1.8 --phase-balance-strength 1.0 --lr-schedule plateau --lr 3e-4 --lr-min 6e-5 --lr-warmup-steps 384 --lr-plateau-patience 2 --lr-plateau-factor 0.7 --lr-plateau-threshold 8e-4 --lr-plateau-cooldown 1 {{v2_model_args}} --checkpoints-dir "$run_ckpt"; \
+      cp -f "$run_ckpt/latest.pt" "$run_ckpt/$run_label"_pretrain_final.pt; \
+      ML_SERVER_BIN="$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 512 --games-per-round 128 --workers 32 --mc-rollouts 4 --device cuda --eval-every 16 --checkpoint "$run_ckpt/$run_label"_pretrain_final.pt --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3 {{v2_model_args}} --named-checkpoint "$run_label"_selfplay_final.pt --checkpoints-dir "$run_ckpt" --runs-dir "$run_logs"; \
+      cp -f "$run_ckpt/best.pt" "$run_ckpt/$run_label"_selfplay_best.pt; \
+      echo "Artifacts root: $run_root"
+
+# Full ~129k-game v2 profile (~128,064 games with staged curriculum defaults):
+# 1) pretrain on all human data, 2) pretrain on >55% data, 3) staged curriculum RL.
+# Note: `just` identifiers cannot start with a digit, so this is `train-129k-v2`.
+train-129k-v2 run_name="v2_human_first_129k": setup-ml build-human-dataset build-human-dataset-win55
+    @echo "Running full ~129k human-first v2 profile (two-stage pretraining + staged curriculum RL)..."
+    @run_label="{{run_name}}"; \
+      case "$run_label" in run_name=*) run_label="${run_label#run_name=}" ;; esac; \
+      run_root="ml/runs/$run_label"; \
+      run_ckpt="$run_root/checkpoints"; \
+      run_logs="$run_root/logs"; \
+      run_bin_dir="$run_root/bin"; \
+      run_bin="$run_bin_dir/$(basename "{{ml_server_bin}}")"; \
+      mkdir -p "$run_ckpt" "$run_logs" "$run_bin_dir"; \
+      cp -f "{{ml_server_bin}}" "$run_bin"; \
+      echo "[PRETRAIN] Stage 1/2: all_games"; \
+      {{cuda_alloc_env}} {{python}} ml/train_from_dataset.py --stage-label all_games --save-every-epochs 16 --keep-epoch-checkpoints 6 --data ml/data/human_dataset.ndjson --epochs 48 --batch 256 --workers 2 --device cuda --max-steps 0 --min-epochs 12 --target-bc-loss 0.235 --target-bc-streak 2 --play-weight 1.5 --bid-weight 1.5 --pass-weight 1.8 --phase-balance-strength 1.0 --lr-schedule plateau --lr 3e-4 --lr-min 6e-5 --lr-warmup-steps 384 --lr-plateau-patience 2 --lr-plateau-factor 0.7 --lr-plateau-threshold 8e-4 --lr-plateau-cooldown 1 {{v2_model_args}} --checkpoints-dir "$run_ckpt"; \
+      if [ -f "$run_ckpt/best.pt" ]; then cp -f "$run_ckpt/best.pt" "$run_ckpt/$run_label"_pretrain_all_best.pt; fi; \
+      cp -f "$run_ckpt/latest.pt" "$run_ckpt/$run_label"_pretrain_all_complete.pt; \
+      echo "[PRETRAIN] Stage 2/2: win55_good_players"; \
+      {{cuda_alloc_env}} {{python}} ml/train_from_dataset.py --stage-label win55_good_players --save-every-epochs 16 --keep-epoch-checkpoints 6 --data ml/data/human_dataset_win55.ndjson --checkpoint "$run_ckpt/$run_label"_pretrain_all_complete.pt --epochs 48 --batch 256 --workers 2 --device cuda --max-steps 0 --min-epochs 12 --target-bc-loss 0.225 --target-bc-streak 2 --play-weight 1.5 --bid-weight 1.6 --pass-weight 1.9 --phase-balance-strength 1.0 --lr-schedule plateau --lr 2.5e-4 --lr-min 5e-5 --lr-warmup-steps 256 --lr-plateau-patience 2 --lr-plateau-factor 0.7 --lr-plateau-threshold 8e-4 --lr-plateau-cooldown 1 {{v2_model_args}} --checkpoints-dir "$run_ckpt"; \
+      if [ -f "$run_ckpt/best.pt" ]; then cp -f "$run_ckpt/best.pt" "$run_ckpt/$run_label"_pretrain_good_best.pt; fi; \
+      cp -f "$run_ckpt/latest.pt" "$run_ckpt/$run_label"_pretrain_good_complete.pt; \
+      cp -f "$run_ckpt/latest.pt" "$run_ckpt/$run_label"_pretrain_final.pt; \
+      ML_SERVER_BIN="$run_bin" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 {{cuda_alloc_env}} {{python}} ml/train_online.py --rounds 645 --games-per-round 256 --workers 24 --mc-rollouts 4 --train-batch 256 --device cuda --eval-every 16 --save-latest-every 16 --checkpoint "$run_ckpt/$run_label"_pretrain_final.pt --ppo-epochs 2 --min-ppo-epochs 2 --max-ppo-epochs 5 --target-kl 0.03 --max-clipfrac 0.40 --min-policy-improve 0.001 --opt-early-stop-patience 1 --adv-query-mode target_plus_stochastic --adv-non-target-prob 0.25 --max-adv-calls-per-episode 3 --trick-phase-frac 0.20 --passing-phase-frac 0.05 --bidding-phase-frac 0.05 --phase-trick-games-per-round 64 --phase-passing-games-per-round 64 --phase-bidding-games-per-round 64 --phase-full-games-per-round 256 --phase-trick-train-batch 384 --phase-passing-train-batch 384 --phase-bidding-train-batch 384 --phase-full-train-batch 256 --phase-loss-patience 3 --phase-loss-min-delta 0.005 --phase-min-rounds-frac 0.40 {{v2_model_args}} --named-checkpoint "$run_label"_selfplay_final.pt --checkpoints-dir "$run_ckpt" --runs-dir "$run_logs"; \
+      if [ -f "$run_ckpt/phase_gameplay_complete.pt" ]; then cp -f "$run_ckpt/phase_gameplay_complete.pt" "$run_ckpt/$run_label"_posttrain_gameplay_complete.pt; fi; \
+      if [ -f "$run_ckpt/phase_passing_complete.pt" ]; then cp -f "$run_ckpt/phase_passing_complete.pt" "$run_ckpt/$run_label"_posttrain_passing_complete.pt; fi; \
+      if [ -f "$run_ckpt/phase_bidding_complete.pt" ]; then cp -f "$run_ckpt/phase_bidding_complete.pt" "$run_ckpt/$run_label"_posttrain_bidding_complete.pt; fi; \
+      if [ -f "$run_ckpt/phase_full_game_complete.pt" ]; then cp -f "$run_ckpt/phase_full_game_complete.pt" "$run_ckpt/$run_label"_full_game_complete.pt; fi; \
       cp -f "$run_ckpt/best.pt" "$run_ckpt/$run_label"_selfplay_best.pt; \
       echo "Artifacts root: $run_root"
 

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::path::PathBuf;
@@ -25,6 +25,8 @@ struct LegacyGameRecord {
     players: Vec<String>,
     cards: HashMap<String, Vec<String>>,
     actions: Vec<String>,
+    #[serde(default)]
+    players_points: HashMap<String, i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,9 +39,10 @@ struct DecisionPoint {
     obs: ObservationJson,
     action_idx: usize,
     pov_parity: u8,
+    pov_seat: u8,
 }
 
-fn parse_args() -> (PathBuf, PathBuf, Option<usize>) {
+fn parse_args() -> (PathBuf, PathBuf, Option<usize>, Option<f64>) {
     let matches = Command::new("ml_convert_legacy")
         .about("Convert legacy full-game logs to decision-point NDJSON for supervised pretraining.")
         .arg(
@@ -60,6 +63,14 @@ fn parse_args() -> (PathBuf, PathBuf, Option<usize>) {
                 .value_parser(clap::value_parser!(usize))
                 .help("Optional max number of games to process."),
         )
+        .arg(
+            Arg::new("min-player-winrate")
+                .long("min-player-winrate")
+                .value_parser(clap::value_parser!(f64))
+                .help(
+                    "Optional strict player win-rate threshold; emit only rows for players with winrate > threshold.",
+                ),
+        )
         .get_matches();
 
     let input = PathBuf::from(
@@ -73,7 +84,60 @@ fn parse_args() -> (PathBuf, PathBuf, Option<usize>) {
             .expect("missing --output"),
     );
     let limit = matches.get_one::<usize>("limit").copied();
-    (input, output, limit)
+    let min_player_winrate = matches.get_one::<f64>("min-player-winrate").copied();
+    (input, output, limit, min_player_winrate)
+}
+
+fn team_points_from_record(record: &LegacyGameRecord) -> Option<(f64, f64)> {
+    if record.players.len() != 4 || record.players_points.is_empty() {
+        return None;
+    }
+    let p0 = f64::from(*record.players_points.get(&record.players[0])?);
+    let p1 = f64::from(*record.players_points.get(&record.players[1])?);
+    let p2 = f64::from(*record.players_points.get(&record.players[2])?);
+    let p3 = f64::from(*record.players_points.get(&record.players[3])?);
+    Some((p0 + p2, p1 + p3))
+}
+
+fn compute_player_winrates(records: &[LegacyGameRecord], total: usize) -> HashMap<String, f64> {
+    let mut wins: HashMap<String, f64> = HashMap::new();
+    let mut games: HashMap<String, f64> = HashMap::new();
+
+    for record in records.iter().take(total) {
+        let Some((team0, team1)) = team_points_from_record(record) else {
+            continue;
+        };
+        let winner_parity = if team0 > team1 {
+            Some(0u8)
+        } else if team1 > team0 {
+            Some(1u8)
+        } else {
+            None
+        };
+
+        for (seat_idx, player) in record.players.iter().enumerate() {
+            *games.entry(player.clone()).or_insert(0.0) += 1.0;
+            match winner_parity {
+                Some(parity) => {
+                    if (seat_idx as u8) % 2 == parity {
+                        *wins.entry(player.clone()).or_insert(0.0) += 1.0;
+                    }
+                }
+                None => {
+                    *wins.entry(player.clone()).or_insert(0.0) += 0.5;
+                }
+            }
+        }
+    }
+
+    let mut out = HashMap::new();
+    for (player, n_games) in games {
+        if n_games > 0.0 {
+            let n_wins = wins.get(&player).copied().unwrap_or(0.0);
+            out.insert(player, n_wins / n_games);
+        }
+    }
+    out
 }
 
 fn parse_suit_char(c: char) -> Result<Suit, String> {
@@ -354,6 +418,7 @@ fn record_decision(game: &Game, action: &GameAction) -> Result<DecisionPoint, St
         obs,
         action_idx,
         pov_parity: action.player.0 % 2,
+        pov_seat: action.player.0,
     })
 }
 
@@ -409,6 +474,7 @@ fn record_pass_pick_decisions(game: &Game, pass_action: &GameAction) -> Result<V
             obs,
             action_idx,
             pov_parity: pass_action.player.0 % 2,
+            pov_seat: pass_action.player.0,
         });
 
         selected.push(card_idx);
@@ -434,7 +500,10 @@ fn illegal_action_error(game: &Game, action: &GameAction) -> String {
     )
 }
 
-fn replay_legacy_game(record: &LegacyGameRecord) -> Result<Vec<serde_json::Value>, String> {
+fn replay_legacy_game(
+    record: &LegacyGameRecord,
+    allowed_players: Option<&HashSet<String>>,
+) -> Result<Vec<serde_json::Value>, String> {
     let mut game = build_seeded_game(record)?;
     let mut pass_collect: Vec<String> = Vec::new();
     let mut decisions: Vec<DecisionPoint> = Vec::new();
@@ -549,6 +618,17 @@ fn replay_legacy_game(record: &LegacyGameRecord) -> Result<Vec<serde_json::Value
 
     let mut rows = Vec::with_capacity(decisions.len());
     for dp in decisions {
+        let pov_seat_idx = usize::from(dp.pov_seat);
+        let pov_player = record
+            .players
+            .get(pov_seat_idx)
+            .cloned()
+            .unwrap_or_else(|| format!("seat_{pov_seat_idx}"));
+        if let Some(allowed) = allowed_players {
+            if !allowed.contains(&pov_player) {
+                continue;
+            }
+        }
         let (my_pts, opp_pts) = if dp.pov_parity == 0 {
             (team0, team1)
         } else {
@@ -561,13 +641,15 @@ fn replay_legacy_game(record: &LegacyGameRecord) -> Result<Vec<serde_json::Value
             "outcome_pts_opp": opp_pts,
             "source": "human_legacy",
             "game_id": game_id,
+            "pov_player": pov_player,
+            "pov_seat": dp.pov_seat,
         }));
     }
     Ok(rows)
 }
 
 fn main() {
-    let (input, output, limit) = parse_args();
+    let (input, output, limit, min_player_winrate) = parse_args();
 
     let mut file = File::open(&input).unwrap_or_else(|e| {
         panic!("failed to open {}: {e}", input.display());
@@ -620,6 +702,42 @@ fn main() {
         }
     };
     let total = limit.unwrap_or(records.len()).min(records.len());
+    let allowed_players: Option<HashSet<String>> = min_player_winrate.map(|thr| {
+        let winrates = compute_player_winrates(&records, total);
+        let mut ranked: Vec<(String, f64)> = winrates
+            .iter()
+            .map(|(name, wr)| (name.clone(), *wr))
+            .collect();
+        ranked.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let filtered: HashSet<String> = ranked
+            .iter()
+            .filter(|(_, wr)| *wr > thr)
+            .map(|(name, _)| name.clone())
+            .collect();
+        eprintln!(
+            "Player winrate filter enabled: threshold > {:.1}% | qualified: {} / {} players",
+            thr * 100.0,
+            filtered.len(),
+            ranked.len()
+        );
+        if !ranked.is_empty() {
+            let preview = ranked
+                .iter()
+                .take(12)
+                .map(|(name, wr)| {
+                    let tag = if filtered.contains(name) { "*" } else { " " };
+                    format!("{tag}{name}:{:.1}%", wr * 100.0)
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!("Top winrates: {preview}");
+        }
+        filtered
+    });
 
     if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent).unwrap_or_else(|e| {
@@ -636,7 +754,7 @@ fn main() {
     let mut rows_written = 0usize;
 
     for (idx, record) in records.into_iter().take(total).enumerate() {
-        match replay_legacy_game(&record) {
+        match replay_legacy_game(&record, allowed_players.as_ref()) {
             Ok(rows) => {
                 ok_games += 1;
                 rows_written += rows.len();
@@ -752,5 +870,77 @@ mod tests {
                 "action_idx should point into synthetic pick legal actions"
             );
         }
+    }
+
+    #[test]
+    fn test_compute_player_winrates_basic() {
+        let rec_a = LegacyGameRecord {
+            id: serde_json::json!({"$oid":"a"}),
+            name: "a".to_string(),
+            players: vec![
+                "P0".to_string(),
+                "P1".to_string(),
+                "P2".to_string(),
+                "P3".to_string(),
+            ],
+            cards: HashMap::new(),
+            actions: vec![],
+            players_points: HashMap::from([
+                ("P0".to_string(), 100),
+                ("P1".to_string(), 40),
+                ("P2".to_string(), 80),
+                ("P3".to_string(), 20),
+            ]),
+        };
+        let rec_b = LegacyGameRecord {
+            id: serde_json::json!({"$oid":"b"}),
+            name: "b".to_string(),
+            players: vec![
+                "P0".to_string(),
+                "P1".to_string(),
+                "P2".to_string(),
+                "P3".to_string(),
+            ],
+            cards: HashMap::new(),
+            actions: vec![],
+            players_points: HashMap::from([
+                ("P0".to_string(), 20),
+                ("P1".to_string(), 110),
+                ("P2".to_string(), 10),
+                ("P3".to_string(), 90),
+            ]),
+        };
+        let wr = compute_player_winrates(&[rec_a, rec_b], 2);
+        assert_eq!(wr.get("P0").copied(), Some(0.5));
+        assert_eq!(wr.get("P1").copied(), Some(0.5));
+        assert_eq!(wr.get("P2").copied(), Some(0.5));
+        assert_eq!(wr.get("P3").copied(), Some(0.5));
+    }
+
+    #[test]
+    fn test_compute_player_winrates_tie_counts_as_half() {
+        let rec = LegacyGameRecord {
+            id: serde_json::json!({"$oid":"c"}),
+            name: "c".to_string(),
+            players: vec![
+                "A".to_string(),
+                "B".to_string(),
+                "C".to_string(),
+                "D".to_string(),
+            ],
+            cards: HashMap::new(),
+            actions: vec![],
+            players_points: HashMap::from([
+                ("A".to_string(), 50),
+                ("B".to_string(), 70),
+                ("C".to_string(), 50),
+                ("D".to_string(), 30),
+            ]),
+        };
+        let wr = compute_player_winrates(&[rec], 1);
+        assert_eq!(wr.get("A").copied(), Some(0.5));
+        assert_eq!(wr.get("B").copied(), Some(0.5));
+        assert_eq!(wr.get("C").copied(), Some(0.5));
+        assert_eq!(wr.get("D").copied(), Some(0.5));
     }
 }

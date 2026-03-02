@@ -26,6 +26,7 @@ ROOT = Path(__file__).parent.parent
 ML = Path(__file__).parent
 UI = ML / "ui"
 CHECKPOINT_DIR = ML / "checkpoints"
+COMPLETED_CHECKPOINT_DIR = CHECKPOINT_DIR / "completed"
 RUNS_DIR = ML / "runs"
 
 sys.path.insert(0, str(ML))
@@ -162,14 +163,14 @@ class GameManager:
 
         self.default_checkpoint = checkpoint
         self.controllers = [
-            SeatController(mode="human", checkpoint=None),
-            SeatController(mode="heuristic", checkpoint=checkpoint),
-            SeatController(mode="heuristic", checkpoint=checkpoint),
-            SeatController(mode="heuristic", checkpoint=checkpoint),
+            SeatController(mode="model", checkpoint=checkpoint),
+            SeatController(mode="model", checkpoint=checkpoint),
+            SeatController(mode="model", checkpoint=checkpoint),
+            SeatController(mode="model", checkpoint=checkpoint),
         ]
 
         if TORCH_OK:
-            for seat in (1, 2, 3):
+            for seat in (0, 1, 2, 3):
                 self._try_enable_model_for_seat(seat, checkpoint)
 
     def close(self) -> None:
@@ -195,10 +196,16 @@ class GameManager:
 
         if raw.suffix == "":
             p = CHECKPOINT_DIR / f"{checkpoint}.pt"
-            return p if p.exists() else None
+            if p.exists():
+                return p
+            p2 = COMPLETED_CHECKPOINT_DIR / f"{checkpoint}.pt"
+            return p2 if p2.exists() else None
 
         p = CHECKPOINT_DIR / raw.name
-        return p if p.exists() else None
+        if p.exists():
+            return p
+        p2 = COMPLETED_CHECKPOINT_DIR / raw.name
+        return p2 if p2.exists() else None
 
     def _checkpoint_label(self, path: Path) -> str:
         """Return a stable checkpoint label that can be resolved again later."""
@@ -214,7 +221,7 @@ class GameManager:
             return str(path)
 
     def available_checkpoints(self) -> list[str]:
-        roots: list[Path] = [CHECKPOINT_DIR]
+        roots: list[Path] = [CHECKPOINT_DIR, COMPLETED_CHECKPOINT_DIR]
         if RUNS_DIR.exists():
             roots.extend([p / "checkpoints" for p in RUNS_DIR.iterdir() if p.is_dir()])
 
@@ -222,7 +229,11 @@ class GameManager:
         for root in roots:
             if not root.exists():
                 continue
-            files.extend(list(root.glob("*.pt")))
+            for p in root.glob("*.pt"):
+                # Hide noisy per-epoch pretraining snapshots from default UI dropdown.
+                if p.name.startswith("epoch_"):
+                    continue
+                files.append(p)
 
         # De-duplicate by absolute path, newest first.
         dedup: dict[str, Path] = {}
@@ -267,12 +278,12 @@ class GameManager:
 
         try:
             state, ckpt_meta, _ = parse_checkpoint(path, map_location="cpu")
-            family = str(ckpt_meta.get("model_family", "legacy"))
+            family = str(ckpt_meta.get("model_family", "parallel_v2"))
             cfg_path = ckpt_meta.get("model_config_path")
             try:
                 model, model_meta = create_model(model_family=family, model_config_path=cfg_path)
             except Exception:
-                # Fallback to legacy if checkpoint metadata points to unavailable model config.
+                # Fallback path for old checkpoints with missing/invalid metadata.
                 model, model_meta = create_model(model_family="legacy")
                 family = "legacy"
 

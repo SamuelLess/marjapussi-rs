@@ -46,7 +46,8 @@ Optimized local ML setup (Git Bash):
 2. `just ui`
 3. `just ui checkpoint=latest port=8765`
 4. `just ui checkpoint=my_run_best.pt port=18765`
-5. `just train-65k`
+5. `just train-1k-human-v2`
+6. `just train-129k-v2`
 
 Notes:
 
@@ -54,6 +55,7 @@ Notes:
 2. If you accidentally pass `checkpoint=...` / `port=...` as literal values, `just ui` normalizes them.
 3. Python dependencies are managed via `pyproject.toml` (`pip install -e ".[dev]"`), and `ml/install_torch.py` selects a CUDA-capable torch build when available.
 4. Supported Python targets for ML tooling are 3.9 through 3.13.
+5. Default model family for training scripts is `parallel_v2` (legacy remains available via `--model-family legacy`).
 
 UI notes:
 

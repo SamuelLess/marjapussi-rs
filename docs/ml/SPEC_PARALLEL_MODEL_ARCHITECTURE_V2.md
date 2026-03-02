@@ -18,7 +18,7 @@ The new model must:
 2. Backward compatibility: legacy checkpoints and inference paths keep working.
 3. No hidden-information leaks: privacy invariants from `SPEC_OBSERVATION_PRIVACY.md` remain mandatory.
 4. Action legality invariants remain unchanged: masked illegal actions before softmax in all phases.
-5. New architecture must be selectable via config/CLI; default behavior remains legacy unless explicitly requested.
+5. New architecture must be selectable via config/CLI; default behavior is `parallel_v2` while `legacy` remains available explicitly.
 
 ## 3. Non-Goals
 

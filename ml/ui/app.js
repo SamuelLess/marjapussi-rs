@@ -68,7 +68,6 @@ let dbgConfirmed = [];
 let dbgPossible = [];
 let dbgPredHands = {};
 let dbgPredCardProbs = [];
-let dbgPredImpossibleMass = {};
 let dbgPredHiddenLoss = null;
 let dbgInference = {};
 const lastKnownHandsBySeat = [[], [], [], []];
@@ -81,6 +80,10 @@ let lastTokenLen = 0;                // last decoded event_tokens length
 // Bid stepper and Passing state
 let selectedPassCardsBySeat = [new Set(), new Set(), new Set(), new Set()];
 let bidStepValue = 120;
+let gameDoneAnnounced = false;
+let gameDoneCleared = false;
+let gameDoneTimer = null;
+let gameDoneResultText = '';
 
 // â”€â”€ 2. WebSocket / connection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -124,7 +127,6 @@ function connect() {
         dbgPossible = m.possible_bitmasks || [];
         dbgPredHands = m.predicted_hands || {};
         dbgPredCardProbs = m.predicted_card_probs || [];
-        dbgPredImpossibleMass = m.predicted_impossible_mass || {};
         dbgPredHiddenLoss = m.predicted_hidden_loss || null;
         dbgInference = m.inference_stats || {};
         if (m.seat_policy) ainfo = m.seat_policy;
@@ -142,6 +144,101 @@ function send(o) { if (ws?.readyState === 1) ws.send(JSON.stringify(o)); }
 
 function setDot(s) {
   document.getElementById('dot').className = 'dot ' + (['', 'ok', 'err'][s] || '');
+}
+
+function teamLabel(teamIdx) {
+  return teamIdx === 0 ? 'Wir (P0+P2)' : 'Gegner (P1+P3)';
+}
+
+function trickCounts(info) {
+  const tricks = info?.tricks || [];
+  let t0 = 0;
+  let t1 = 0;
+  tricks.forEach(t => {
+    const w = Number(t?.winner ?? -1);
+    if (w >= 0 && Number.isFinite(w)) {
+      if (w % 2 === 0) t0 += 1;
+      else t1 += 1;
+    }
+  });
+  return { t0, t1 };
+}
+
+function buildGameResultSummary(obs, info) {
+  const tp = Array.isArray(info?.team_points) && info.team_points.length >= 2
+    ? info.team_points
+    : [Number(obs?.points_my_team ?? 0), Number(obs?.points_opp_team ?? 0)];
+  const rawTeam0 = Number(tp[0] ?? 0);
+  const rawTeam1 = Number(tp[1] ?? 0);
+  let team0 = rawTeam0;
+  let team1 = rawTeam1;
+  const { t0, t1 } = trickCounts(info);
+
+  const hasContract = info?.playing_party != null && typeof info?.won === 'boolean';
+  let contractLine = '';
+  if (hasContract) {
+    const playing = Number(info.playing_party);
+    const won = Boolean(info.won);
+    const gv = Number(info?.game_value ?? 0);
+    const schwarz = Boolean(info?.schwarz);
+    const playingEval = won ? gv : -gv * (schwarz ? 2 : 1);
+    if (playing === 0) team0 = playingEval;
+    else if (playing === 1) team1 = playingEval;
+
+    const contractTeam = teamLabel(playing);
+    const verdict = won ? 'erfuellt' : (schwarz ? 'verloren (Schwarz)' : 'verloren');
+    contractLine = ` | Vertrag: ${contractTeam} ${gv ? `${gv}` : ''} ${verdict}`.trim();
+  }
+
+  let winnerTeam = -1;
+  if (team0 > team1) winnerTeam = 0;
+  else if (team1 > team0) winnerTeam = 1;
+
+  const winnerTxt = winnerTeam >= 0 ? teamLabel(winnerTeam) : 'Unentschieden';
+  const banner = `Spielende - Sieger: ${winnerTxt} | Punkte: Wir ${team0} : ${team1} Gegner | Stiche: ${t0}:${t1}${contractLine}`;
+  const log = `<b>Spielende</b>: ${winnerTxt} | Punkte <b>${team0}:${team1}</b> | Stiche <b>${t0}:${t1}</b>${contractLine}`;
+  return { banner, log };
+}
+
+function handleGameDone(obs) {
+  if (!gs?.done) {
+    gameDoneAnnounced = false;
+    gameDoneCleared = false;
+    gameDoneResultText = '';
+    if (gameDoneTimer) {
+      clearTimeout(gameDoneTimer);
+      gameDoneTimer = null;
+    }
+    return;
+  }
+
+  const tinfo = document.getElementById('trick-info');
+  const trick = document.getElementById('trick');
+  const turn = document.getElementById('turn-state');
+  const info = gs.info || {};
+
+  if (!gameDoneAnnounced) {
+    const summary = buildGameResultSummary(obs, info);
+    gameDoneResultText = summary.banner;
+    gameDoneAnnounced = true;
+    gameDoneCleared = false;
+    if (tinfo) tinfo.textContent = 'Spielende - Auswertung...';
+    if (turn) turn.textContent = 'Spielende - Ergebnis wird berechnet';
+    evLog(em('trophy', '*'), summary.log, 'trump-ev');
+
+    if (gameDoneTimer) clearTimeout(gameDoneTimer);
+    gameDoneTimer = setTimeout(() => {
+      if (trick) trick.innerHTML = '';
+      prevTrickKey = '';
+      gameDoneCleared = true;
+      if (tinfo) tinfo.textContent = gameDoneResultText;
+      if (turn) turn.textContent = gameDoneResultText;
+      gameDoneTimer = null;
+    }, 900);
+  } else if (gameDoneCleared) {
+    if (tinfo) tinfo.textContent = gameDoneResultText;
+    if (turn) turn.textContent = gameDoneResultText;
+  }
 }
 
 // â”€â”€ 3. Card DOM helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -454,7 +551,7 @@ function render() {
 
   // Hands (selective re-render)
   for (let s = 0; s < 4; s++) renderHand(s, obs, tableViewSeat);
-  renderTrick(obs);
+  renderTrick(obs, !!gs?.done);
 
   // Active + view ring
   for (let s = 0; s < 4; s++) {
@@ -484,6 +581,8 @@ function render() {
     const lt = info.tricks[info.tricks.length - 1];
     showLastTrick(lt.cards, lt.winner, lt.points);
   }
+
+  handleGameDone(obs);
 }
 
 // â”€â”€ 7. Hand renderer (selective animation) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -548,6 +647,8 @@ function renderHand(s, obs, tableViewSeat) {
   const seatView = seatObs(s);
   const isHumanSeat = isSeatHumanControlled(s);
   const canShowViewSeat = s === tableViewSeat;
+  const cardsRemaining = Number(obs.cards_remaining?.[s] ?? 0);
+  if (cardsRemaining === 0) lastKnownHandsBySeat[s] = [];
   let faceUpCards = null;
   if (debugMode) {
     faceUpCards = (s === 0) ? obs.my_hand_indices : debugHand;
@@ -558,7 +659,7 @@ function renderHand(s, obs, tableViewSeat) {
   // Persist last known cards so hands do not disappear while waiting for a fresh POV view.
   if (Array.isArray(faceUpCards) && faceUpCards.length > 0) {
     lastKnownHandsBySeat[s] = [...faceUpCards];
-  } else if (!debugMode && (isHumanSeat || canShowViewSeat) && lastKnownHandsBySeat[s].length > 0) {
+  } else if (!debugMode && cardsRemaining > 0 && (isHumanSeat || canShowViewSeat) && lastKnownHandsBySeat[s].length > 0) {
     faceUpCards = [...lastKnownHandsBySeat[s]];
   }
 
@@ -714,7 +815,7 @@ function renderHand(s, obs, tableViewSeat) {
 
 // â€”â€” 8. Trick renderer (animate only newest card) â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”â€”
 
-function renderTrick(obs) {
+function renderTrick(obs, gameDone = false) {
   let trickIdxs = obs.current_trick_indices || [];
   let trickPlayers = obs.current_trick_players || [];
   let isLingering = false;
@@ -722,7 +823,7 @@ function renderTrick(obs) {
   // The server resolves tricks instantly, so we never see trickIdxs.length === 4.
   // When a trick is empty but we're past trick 1, scan event_tokens backwards
   // to find the last 4 played cards so we can linger them.
-  if (trickIdxs.length === 0 && (obs.trick_number || 1) > 1) {
+  if (!gameDone && trickIdxs.length === 0 && (obs.trick_number || 1) > 1) {
     const tokens = obs.event_tokens || [];
     const recentCards = [];
     const recentPlayers = [];
@@ -1275,7 +1376,7 @@ function renderAI(obs) {
         const h = hidden.hidden_loss;
         const loss = document.createElement('div');
         loss.className = 'ai-hidden';
-        loss.textContent = `HiddenLoss T:${Number(h.total || 0).toFixed(3)} Pos:${Number(h.pos_bce || 0).toFixed(3)} Imp:${Number(h.impossible_bce || 0).toFixed(3)}`;
+        loss.textContent = `HiddenLoss T:${Number(h.total || 0).toFixed(3)} Pos:${Number(h.pos_bce || 0).toFixed(3)} Acc:${Number(h.pos_acc || 0).toFixed(3)}`;
         d.appendChild(loss);
       }
     }
@@ -1390,15 +1491,13 @@ function renderDebugPanel(obs) {
     p.appendChild(predTitle);
     if (dbgPredHiddenLoss) {
       const posBce = Number(dbgPredHiddenLoss.pos_bce || 0);
-      const impBce = Number(dbgPredHiddenLoss.impossible_bce || 0);
       const total = Number(dbgPredHiddenLoss.total || 0);
       const posAcc = Number(dbgPredHiddenLoss.pos_acc || 0);
-      const impMass = Number(dbgPredHiddenLoss.impossible_mass || 0);
       p.appendChild(
         mk(
           'div',
           'dbg-seat-lbl',
-          `HiddenLoss total ${total.toFixed(4)} | posBCE ${posBce.toFixed(4)} | impBCE ${impBce.toFixed(4)} | posAcc ${posAcc.toFixed(3)} | impMass ${impMass.toFixed(3)}`
+          `HiddenLoss total ${total.toFixed(4)} | posBCE ${posBce.toFixed(4)} | posAcc ${posAcc.toFixed(3)}`
         )
       );
     }
@@ -1407,15 +1506,14 @@ function renderDebugPanel(obs) {
       const pred = dbgPredHands[String(s)] || dbgPredHands[s] || [];
       const possible = dbgPossible[s - 1] || [];
       const probsSeat = dbgPredCardProbs[s - 1] || [];
-      const imp = Number(dbgPredImpossibleMass[String(s)] ?? dbgPredImpossibleMass[s] ?? 0);
 
       const row = mk('div', 'dbg-trick-row');
-      row.appendChild(mk('span', 'dbg-trick-lbl', `${PNAMES[s]} | ImpossibleMass=${imp.toFixed(3)}`));
+      row.appendChild(mk('span', 'dbg-trick-lbl', `${PNAMES[s]}`));
 
       pred.forEach(cardIdx => {
         const card = mkCard(cardIdx, '', false);
         const isPossible = !!possible[cardIdx];
-        card.style.boxShadow = isPossible ? '0 0 0 2px #22c55e' : '0 0 0 2px #f87171';
+        card.classList.add(isPossible ? 'dbg-pred-ok' : 'dbg-pred-wrong');
         const pr = probsSeat[cardIdx];
         if (pr != null) card.title += ` | p=${(pr * 100).toFixed(1)}%`;
         row.appendChild(card);
@@ -1538,9 +1636,19 @@ function clearLocalState() {
   prevHand.fill(''); prevTrickKey = '';
   for (let s = 0; s < 4; s++) lastKnownHandsBySeat[s] = [];
   _lastTrump = undefined;
+  gameDoneAnnounced = false;
+  gameDoneCleared = false;
+  gameDoneResultText = '';
+  if (gameDoneTimer) {
+    clearTimeout(gameDoneTimer);
+    gameDoneTimer = null;
+  }
   document.getElementById('evlog').innerHTML = '';
   document.getElementById('last-trick-row').style.display = 'none';
   document.getElementById('turn-state').textContent = 'Kein Spiel';
+  document.getElementById('trick-info').textContent = '-';
+  const trick = document.getElementById('trick');
+  if (trick) trick.innerHTML = '';
   document.getElementById('bid-area').dataset.ahash = '';
   selectedPassCardsBySeat.forEach(set => set.clear());
 }

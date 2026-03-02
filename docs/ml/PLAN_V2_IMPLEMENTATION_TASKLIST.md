@@ -8,7 +8,7 @@ This plan is implementation-facing and intended for continuous checkpoint commit
 
 ## Scope Summary
 
-1. Keep current model/checkpoints usable (`legacy` path remains default-compatible).
+1. Keep current model/checkpoints usable (`legacy` path remains explicitly selectable for compatibility).
 2. Implement full `parallel_v2` architecture integration per `SPEC_PARALLEL_MODEL_ARCHITECTURE_V2.md`.
 3. Add model-family routing across training, serving, and UI.
 4. Add tests, smoke training routes, and comparative benchmarking.

@@ -5,6 +5,11 @@ Canonical docs for architecture and implementation contracts now live in:
 1. `docs/ML_PROJECT_OVERVIEW.md`
 2. `docs/ml/README.md`
 
+Current runtime default:
+
+- Model family defaults to `parallel_v2` across training/inference scripts.
+- `legacy` remains supported only as an explicit opt-in (`--model-family legacy`) for compatibility/baselines.
+
 A deep RL + Transformer approach to learning Marjapussi, trained from endgame outward.
 
 ---

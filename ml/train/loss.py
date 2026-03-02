@@ -4,6 +4,30 @@ import torch.nn.functional as F
 from torch.amp import autocast
 
 
+def _blend_policy_advantage(
+    base_advantage: torch.Tensor,
+    meta_advantage: torch.Tensor | None,
+    train_phase: str,
+    full_game_meta_adv_weight: float,
+    bidding_meta_adv_weight: float,
+) -> torch.Tensor:
+    """
+    Use long-horizon meta signal as primary advantage in final full-game phase,
+    and as a secondary signal during bidding curriculum.
+    """
+    if meta_advantage is None:
+        return base_advantage
+    if train_phase == "full_game":
+        w = max(0.0, min(1.0, float(full_game_meta_adv_weight)))
+    elif train_phase == "bidding_prop":
+        w = max(0.0, min(1.0, float(bidding_meta_adv_weight)))
+    else:
+        w = 0.0
+    if w <= 0.0:
+        return base_advantage
+    return (1.0 - w) * base_advantage + w * meta_advantage
+
+
 def _hidden_known_positive_loss(
     card_logits: torch.Tensor,
     hidden_known: torch.Tensor,
@@ -81,6 +105,8 @@ def train_step(
     forced_imitation_weight: float = 0.5,
     forced_imitation_bid_mult: float = 1.0,
     forced_imitation_pass_mult: float = 1.0,
+    full_game_meta_adv_weight: float = 0.85,
+    bidding_meta_adv_weight: float = 0.30,
 ) -> dict:
     model.train()
     with autocast(device_type='cuda', enabled=use_amp):
@@ -104,7 +130,13 @@ def train_step(
         safe_log_prob_old = torch.clamp(batch["log_prob_old"], min=-100.0)
         chosen_lp_clamped = torch.clamp(chosen_lp, min=-100.0)
         ratio_all = torch.exp(chosen_lp_clamped - safe_log_prob_old)
-        adv_all = batch["advantage"]
+        adv_all = _blend_policy_advantage(
+            base_advantage=batch["advantage"],
+            meta_advantage=batch.get("meta_advantage"),
+            train_phase=train_phase,
+            full_game_meta_adv_weight=full_game_meta_adv_weight,
+            bidding_meta_adv_weight=bidding_meta_adv_weight,
+        )
         is_forced = batch.get("is_forced", torch.zeros_like(chosen_lp)).float() > 0.5
         sampled_mask = ~is_forced
         
@@ -290,6 +322,7 @@ def train_step(
             "approx_kl": float('nan'),
             "clipfrac": float('nan'),
             "forced_imitation": float('nan'),
+            "meta_adv_weight": float('nan'),
         }
 
     opt.zero_grad(set_to_none=True)
@@ -329,4 +362,9 @@ def train_step(
         "approx_kl": approx_kl.item() if grads_valid else float('nan'),
         "clipfrac": clipfrac.item() if grads_valid else float('nan'),
         "forced_imitation": forced_imitation_loss.item() if grads_valid else float('nan'),
+        "meta_adv_weight": float(
+            full_game_meta_adv_weight if train_phase == "full_game"
+            else bidding_meta_adv_weight if train_phase == "bidding_prop"
+            else 0.0
+        ),
     }
