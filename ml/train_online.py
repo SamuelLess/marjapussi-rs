@@ -376,6 +376,209 @@ def _apply_series_meta_to_episodes(
     return out
 
 
+def _extract_episode_outcome_metrics(info: dict[str, Any]) -> dict[str, Any]:
+    if not info:
+        return {
+            "no_one_played": True,
+            "playing_party": None,
+            "highest_bid": 115,
+            "contract_made": None,
+            "playing_tricks": None,
+            "defending_tricks": None,
+            "called_trumps": None,
+            "possible_pairs": None,
+            "playing_questions": None,
+            "defending_questions": None,
+            "schwarz": False,
+            "first_trick_playing_won": None,
+            "playing_points": None,
+            "defending_points": None,
+        }
+
+    no_one_played = bool(info.get("no_one_played", False))
+    playing_party = info.get("playing_party")
+    try:
+        playing_party = None if playing_party is None else int(playing_party) % 2
+    except Exception:
+        playing_party = None
+
+    team_points = info.get("team_points", [0, 0]) or [0, 0]
+    if not isinstance(team_points, (list, tuple)) or len(team_points) != 2:
+        team_points = [0, 0]
+
+    playing_points = None
+    defending_points = None
+    if playing_party is not None:
+        playing_points = float(team_points[playing_party])
+        defending_points = float(team_points[1 - playing_party])
+
+    playing_tricks = info.get("playing_party_tricks")
+    defending_tricks = info.get("defending_party_tricks")
+    if (playing_tricks is None or defending_tricks is None) and playing_party is not None:
+        tricks = info.get("tricks", []) or []
+        if isinstance(tricks, list) and tricks:
+            p = 0
+            for trick in tricks:
+                try:
+                    winner = int(trick.get("winner", -1))
+                except Exception:
+                    continue
+                if (winner % 2) == playing_party:
+                    p += 1
+            playing_tricks = p
+            defending_tricks = max(0, len(tricks) - p)
+
+    highest_bid = info.get("highest_bid")
+    if highest_bid is None:
+        highest_bid = info.get("game_value", 115)
+    try:
+        highest_bid = int(highest_bid)
+    except Exception:
+        highest_bid = 115
+
+    contract_made = info.get("contract_made", info.get("won"))
+    if contract_made is not None:
+        contract_made = bool(contract_made)
+
+    called_trumps = info.get("playing_called_trumps")
+    possible_pairs = info.get("playing_possible_pairs")
+    playing_questions = info.get("playing_questions")
+    defending_questions = info.get("defending_questions")
+
+    def _maybe_int(v):
+        if v is None:
+            return None
+        try:
+            return int(v)
+        except Exception:
+            return None
+
+    return {
+        "no_one_played": no_one_played,
+        "playing_party": playing_party,
+        "highest_bid": highest_bid,
+        "contract_made": contract_made,
+        "playing_tricks": _maybe_int(playing_tricks),
+        "defending_tricks": _maybe_int(defending_tricks),
+        "called_trumps": _maybe_int(called_trumps),
+        "possible_pairs": _maybe_int(possible_pairs),
+        "playing_questions": _maybe_int(playing_questions),
+        "defending_questions": _maybe_int(defending_questions),
+        "schwarz": bool(info.get("schwarz", False)),
+        "first_trick_playing_won": (
+            None
+            if info.get("first_trick_playing_won") is None
+            else bool(info.get("first_trick_playing_won"))
+        ),
+        "playing_points": playing_points,
+        "defending_points": defending_points,
+    }
+
+
+def _aggregate_round_quality_metrics(episode_metrics: list[dict[str, Any]]) -> dict[str, Any]:
+    n_games = len(episode_metrics)
+    if n_games == 0:
+        return {
+            "games": 0,
+            "contracts": 0,
+            "pass_games": 0,
+            "pass_game_rate": 0.0,
+            "avg_highest_bid": 0.0,
+            "contract_made_rate": 0.0,
+            "avg_playing_tricks": 0.0,
+            "avg_defending_tricks": 0.0,
+            "called_pairs": 0,
+            "possible_pairs": 0,
+            "pair_call_rate": 0.0,
+            "schwarz_rate": 0.0,
+            "avg_playing_questions": 0.0,
+            "avg_defending_questions": 0.0,
+            "first_trick_playing_win_rate": 0.0,
+            "avg_playing_margin_points": 0.0,
+        }
+
+    contracts = 0
+    pass_games = 0
+    highest_bid_sum = 0.0
+    made = 0
+    playing_tricks_sum = 0.0
+    defending_tricks_sum = 0.0
+    playing_tricks_n = 0
+    called_pairs = 0
+    possible_pairs = 0
+    schwarz_n = 0
+    playing_q_sum = 0.0
+    defending_q_sum = 0.0
+    q_n = 0
+    first_trick_win = 0
+    first_trick_n = 0
+    margin_sum = 0.0
+    margin_n = 0
+
+    for m in episode_metrics:
+        if m.get("no_one_played", False):
+            pass_games += 1
+        else:
+            contracts += 1
+            highest_bid_sum += float(m.get("highest_bid", 115))
+            if bool(m.get("contract_made", False)):
+                made += 1
+
+        pt = m.get("playing_tricks")
+        dt = m.get("defending_tricks")
+        if pt is not None and dt is not None:
+            playing_tricks_sum += float(pt)
+            defending_tricks_sum += float(dt)
+            playing_tricks_n += 1
+
+        cp = m.get("called_trumps")
+        pp = m.get("possible_pairs")
+        if cp is not None and pp is not None:
+            called_pairs += max(0, int(cp))
+            possible_pairs += max(0, int(pp))
+
+        if bool(m.get("schwarz", False)):
+            schwarz_n += 1
+
+        pq = m.get("playing_questions")
+        dq = m.get("defending_questions")
+        if pq is not None and dq is not None:
+            playing_q_sum += float(pq)
+            defending_q_sum += float(dq)
+            q_n += 1
+
+        ft = m.get("first_trick_playing_won")
+        if ft is not None:
+            first_trick_n += 1
+            if bool(ft):
+                first_trick_win += 1
+
+        p_pts = m.get("playing_points")
+        d_pts = m.get("defending_points")
+        if p_pts is not None and d_pts is not None:
+            margin_sum += float(p_pts) - float(d_pts)
+            margin_n += 1
+
+    return {
+        "games": n_games,
+        "contracts": contracts,
+        "pass_games": pass_games,
+        "pass_game_rate": pass_games / max(1, n_games),
+        "avg_highest_bid": highest_bid_sum / max(1, contracts),
+        "contract_made_rate": made / max(1, contracts),
+        "avg_playing_tricks": playing_tricks_sum / max(1, playing_tricks_n),
+        "avg_defending_tricks": defending_tricks_sum / max(1, playing_tricks_n),
+        "called_pairs": called_pairs,
+        "possible_pairs": possible_pairs,
+        "pair_call_rate": (called_pairs / max(1, possible_pairs)) if possible_pairs > 0 else 0.0,
+        "schwarz_rate": schwarz_n / max(1, n_games),
+        "avg_playing_questions": playing_q_sum / max(1, q_n),
+        "avg_defending_questions": defending_q_sum / max(1, q_n),
+        "first_trick_playing_win_rate": first_trick_win / max(1, first_trick_n),
+        "avg_playing_margin_points": margin_sum / max(1, margin_n),
+    }
+
+
 def atomic_torch_save(payload: Any, path: Path, retries: int = 5, delay_s: float = 0.05) -> None:
     """
     Atomically publish checkpoints so readers never see partially-written files.
@@ -461,6 +664,7 @@ def run_episode(
     reward_cfg: RewardConfig = RewardConfig(),
     full_game_meta_margin_weight: float = 0.20,
     full_game_meta_margin_clip: float = 1.0,
+    episode_metrics_out: dict[str, Any] | None = None,
 ) -> list[Transition]:
     """
     Play one complete game and return training transitions for POV-controlled decisions only.
@@ -626,6 +830,11 @@ def run_episode(
             margin_clip=full_game_meta_margin_clip,
         )
 
+        episode_metrics = _extract_episode_outcome_metrics(info if isinstance(info, dict) else {})
+        if episode_metrics_out is not None:
+            episode_metrics_out.clear()
+            episode_metrics_out.update(episode_metrics)
+
         if not transitions:
             return []
 
@@ -684,6 +893,9 @@ def run_episode(
         return out_transitions
     except Exception as e:
         Log.error(f"Episode failed: {e}")
+        if episode_metrics_out is not None:
+            episode_metrics_out.clear()
+            episode_metrics_out.update(_extract_episode_outcome_metrics({}))
         return []
 
 
@@ -758,9 +970,11 @@ def eval_deterministic(model, device, n=100, reward_cfg: RewardConfig = RewardCo
     
     total_pts_diff = 0.0
     valid_games = 0
+    episode_metrics: list[dict[str, Any]] = []
     
     try:
         for seed in range(1, n + 1):
+            ep_metrics: dict[str, Any] = {}
             eps = run_episode(
                 env,
                 model,
@@ -771,19 +985,23 @@ def eval_deterministic(model, device, n=100, reward_cfg: RewardConfig = RewardCo
                 seed=seed,
                 pov=(seed - 1) % 4,
                 reward_cfg=reward_cfg,
+                episode_metrics_out=ep_metrics,
             )
             if eps:
                 last_t = eps[-1]
                 diff = (last_t.pts_my - last_t.pts_opp) * 420.0
                 total_pts_diff += diff
                 valid_games += 1
+            if ep_metrics:
+                episode_metrics.append(ep_metrics)
     finally:
         if env.proc:
             env.proc.kill()
         server.stop()
         
     avg_diff = total_pts_diff / max(1, valid_games)
-    return {"avg_diff": avg_diff}
+    quality = _aggregate_round_quality_metrics(episode_metrics)
+    return {"avg_diff": avg_diff, "quality": quality}
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -1095,6 +1313,7 @@ def train_online(
         def collect_one(game_idx):
             env = pool_envs.get()
             replacement_env = env
+            episode_metrics: dict[str, Any] = {}
             try:
                 res = run_episode(env, model, device, mc_rollouts, stage, server,
                                   start_trick=curriculum_trick,
@@ -1108,7 +1327,8 @@ def train_online(
                                   max_info_adv_calls_per_episode=max_info_adv_calls_per_episode,
                                   reward_cfg=reward_cfg,
                                   full_game_meta_margin_weight=full_game_meta_margin_weight,
-                                  full_game_meta_margin_clip=full_game_meta_margin_clip)
+                                  full_game_meta_margin_clip=full_game_meta_margin_clip,
+                                  episode_metrics_out=episode_metrics)
             finally:
                 if not env.is_alive():
                     rc = env.return_code()
@@ -1138,7 +1358,7 @@ def train_online(
                         f"TargetTrick: {curriculum_trick if curriculum_trick is not None else 'full'}",
                         end=""
                     )
-            return res
+            return res, episode_metrics
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
             results = list(pool.map(collect_one, range(round_games)))
@@ -1146,14 +1366,20 @@ def train_online(
         server.stop()
         pool_envs.close()
 
+        episodes: list[list[Transition]] = []
+        episode_metrics: list[dict[str, Any]] = []
+        for eps, ep_meta in results:
+            episodes.append(eps)
+            episode_metrics.append(ep_meta)
+
         if train_phase in ("bidding_prop", "full_game"):
             blend = (
                 series_blend_weight_bidding
                 if train_phase == "bidding_prop"
                 else series_blend_weight_full_game
             )
-            results = _apply_series_meta_to_episodes(
-                results,
+            episodes = _apply_series_meta_to_episodes(
+                episodes,
                 points_normalizer=reward_cfg.points_normalizer,
                 series_target_points=series_target_points,
                 series_max_games=series_max_games,
@@ -1163,7 +1389,7 @@ def train_online(
                 series_blend_weight=blend,
             )
 
-        for eps in results:
+        for eps in episodes:
             all_transitions.extend(eps)
         games_played_total += int(round_games)
 
@@ -1279,6 +1505,7 @@ def train_online(
 
         avg_loss = {k: v / max(n_steps, 1) for k, v in loss_acc.items()}
         train_time = time.time() - t1
+        round_quality = _aggregate_round_quality_metrics(episode_metrics)
 
         # ── Summary ──────────────────────────────────────────────────────────
         policy_label = "heuristic" if stage == 0 else f"model-v{rnd+1}"
@@ -1299,11 +1526,28 @@ def train_online(
         print(f"  - Losses:   Total: {avg_loss.get('total',0):.4f} | Pol: {avg_loss.get('policy',0):.4f} | Imit: {avg_loss.get('forced_imitation',0):.4f} | Val: {avg_loss.get('value',0):.4f} | Ent: {avg_loss.get('entropy',0):.4f} | Pts: {avg_loss.get('pts',0):.4f} | Hidden: {avg_loss.get('hidden',0):.4f} | KL: {avg_loss.get('approx_kl',0):.4f} | Clip: {avg_loss.get('clipfrac',0):.3f}")
         print(f"  - HiddenAux: PosBCE: {avg_loss.get('hidden_pos_loss',0):.4f} | KnownBCE: {avg_loss.get('hidden_known_loss',0):.4f} | ImpBCE: {avg_loss.get('hidden_impossible_loss',0):.4f} | Count: {avg_loss.get('hidden_count_loss',0):.4f} | Exclusive: {avg_loss.get('hidden_exclusive_loss',0):.4f}")
         print(f"  - HiddenQ:   PosAcc: {avg_loss.get('hidden_pos_acc',0):.3f} | KnownAcc: {avg_loss.get('hidden_known_acc',0):.3f} | ExclusiveAcc: {avg_loss.get('hidden_exclusive_acc',0):.3f} | ImpossibleMass: {avg_loss.get('impossible_mass',0):.3f}")
+        print(
+            f"  - BidQ:     AvgBid: {round_quality['avg_highest_bid']:.1f} | "
+            f"Made: {round_quality['contract_made_rate']:.1%} | "
+            f"PassGames: {round_quality['pass_game_rate']:.1%}"
+        )
+        print(
+            f"  - PassQ:    Tricks(play:def): {round_quality['avg_playing_tricks']:.2f}:{round_quality['avg_defending_tricks']:.2f} | "
+            f"AvgMargin: {round_quality['avg_playing_margin_points']:+.1f} | "
+            f"Schwarz: {round_quality['schwarz_rate']:.1%}"
+        )
+        print(
+            f"  - PlayQ:    TrumpCalls: {round_quality['called_pairs']}/{round_quality['possible_pairs']} "
+            f"({round_quality['pair_call_rate']:.1%}) | "
+            f"FirstTrickWin(play): {round_quality['first_trick_playing_win_rate']:.1%} | "
+            f"Q(play/def): {round_quality['avg_playing_questions']:.2f}/{round_quality['avg_defending_questions']:.2f}"
+        )
         print(f"  - Time:     Sim: {gen_time:.1f}s | Opt: {train_time:.1f}s")
 
         log_entry = {"round": rnd+1, "stage": stage, "phase": train_phase, "n_games": round_games,
                      "n_transitions": n_trans, "losses": avg_loss, "opt_epochs": epoch,
-                     "gen_secs": gen_time, "train_secs": train_time}
+                     "gen_secs": gen_time, "train_secs": train_time,
+                     "quality": round_quality}
 
         # Optional phase-level convergence transition.
         phase_completed = False
@@ -1352,7 +1596,17 @@ def train_online(
             eval_metrics = eval_deterministic(model, device, n=100, reward_cfg=reward_cfg)
             avg_diff = eval_metrics["avg_diff"]
             print(f"           -> Point diff (100 games): {avg_diff:+.1f}")
+            eq = eval_metrics.get("quality", {})
+            if eq:
+                print(
+                    "           -> Eval quality: "
+                    f"Made={eq.get('contract_made_rate', 0.0):.1%} | "
+                    f"PassGames={eq.get('pass_game_rate', 0.0):.1%} | "
+                    f"TrumpCalls={eq.get('pair_call_rate', 0.0):.1%} | "
+                    f"FirstTrickWin(play)={eq.get('first_trick_playing_win_rate', 0.0):.1%}"
+                )
             log_entry["avg_diff"] = avg_diff
+            log_entry["eval_quality"] = eq
             atomic_torch_save(
                 build_checkpoint_payload(
                     model,

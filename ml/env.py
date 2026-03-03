@@ -151,7 +151,13 @@ class MarjapussiEnv:
             return None
         return self.proc.poll()
 
-    def reset(self, pov: Optional[int] = None, start_trick: Optional[int] = None, seed: Optional[int] = None) -> dict:
+    def reset(
+        self,
+        pov: Optional[int] = None,
+        start_trick: Optional[int] = None,
+        seed: Optional[int] = None,
+        fixed_hands: Optional[list[list[int]]] = None,
+    ) -> dict:
         if pov is not None:
             self.pov = pov
         cmd = {
@@ -163,6 +169,8 @@ class MarjapussiEnv:
             cmd["start_trick"] = start_trick
         if seed is not None:
             cmd["seed"] = seed
+        if fixed_hands is not None:
+            cmd["fixed_hands"] = fixed_hands
         resp = _send(self.proc, cmd)
         if resp.get("type") == "error":
             raise RuntimeError(resp["message"])

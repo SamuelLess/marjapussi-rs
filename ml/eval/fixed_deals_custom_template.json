@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "description": "Template for editable fixed-deal evaluations. Use either seed or explicit hands.",
+  "card_encoding": "Preferred compact token SUIT+VALUE using core-game notation: suits G=Green, E=Acorns, S=Bells, R=Red; values 6,7,8,9,U,O,K,Z(10),A(Ace). Legacy formats are still supported.",
+  "cases": [
+    {
+      "id": "seed_example",
+      "seed": 1234,
+      "notes": "Deterministic shuffled game from seed."
+    },
+    {
+      "id": "explicit_hands_example",
+      "notes": "Absolute seats P0..P3, each exactly 9 cards, all 36 unique cards.",
+      "hands": {
+        "p0_hand": "G6 G7 G8 G9 GU GO GK GZ GS",
+        "p1_hand": "E6 E7 E8 E9 EU EO EK EZ ES",
+        "p2_hand": "S6 S7 S8 S9 SU SO SK SZ SA",
+        "p3_hand": "R6 R7 R8 R9 RU RO RK RZ RA"
+      }
+    }
+  ]
+}

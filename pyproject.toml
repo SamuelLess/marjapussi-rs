@@ -12,6 +12,7 @@ dependencies = [
     "numpy",
     "aiohttp",
     "websockets",
+    "telethon>=1.36",
     "tomli>=2.0.1; python_version < '3.11'",
 ]
 classifiers = [
@@ -26,6 +27,9 @@ classifiers = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+]
+eval = [
+    "torch",
 ]
 
 [tool.setuptools]

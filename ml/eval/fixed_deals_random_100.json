@@ -1,0 +1,1113 @@
+{
+  "version": 1,
+  "description": "Random fixed deals generated via ml_server; edit compact hand strings freely.",
+  "card_encoding": "Compact token SUIT+VALUE, canonical suits: G=Green, E=Acorns, S=Bells, R=Red; values: 6,7,8,9,U,O,K,Z(10),A(Ace).",
+  "generator": {
+    "source": "ml/generate_fixed_deals.py",
+    "master_seed": 20260303,
+    "generated_at_unix": 1772550763,
+    "count": 100
+  },
+  "cases": [
+    {
+      "id": "random_0001",
+      "seed": 4385382001740204700,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GO GK EK EZ SO SZ SA R9 RU",
+        "p1_hand": "G7 G9 GU E7 E8 EU S6 S8 RO",
+        "p2_hand": "G8 GZ GA E6 EO S7 S9 SK R8",
+        "p3_hand": "G6 E9 EA SU R6 R7 RK RZ RA"
+      }
+    },
+    {
+      "id": "random_0002",
+      "seed": 3888527283861107362,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 G9 GZ GA E9 EA S8 S9 R7",
+        "p1_hand": "G8 E7 EO S6 SK SA R6 RU RA",
+        "p2_hand": "G7 GO GK E6 EZ S7 RO RK RZ",
+        "p3_hand": "GU E8 EU EK SU SO SZ R8 R9"
+      }
+    },
+    {
+      "id": "random_0003",
+      "seed": 8679066837780922880,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 GO GZ E8 E9 EK S7 SO RK",
+        "p1_hand": "G7 EZ EA S6 SK R7 R8 R9 RZ",
+        "p2_hand": "G9 GU GK E6 EO S8 SA RU RA",
+        "p3_hand": "G8 GA E7 EU S9 SU SZ R6 RO"
+      }
+    },
+    {
+      "id": "random_0004",
+      "seed": 1414671263601163159,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 E6 E8 E9 EZ S8 SO SZ RU",
+        "p1_hand": "G8 GU GK GA E7 S7 SK R6 R8",
+        "p2_hand": "GO EK EA S6 S9 SA R9 RK RA",
+        "p3_hand": "G7 G9 GZ EU EO SU R7 RO RZ"
+      }
+    },
+    {
+      "id": "random_0005",
+      "seed": 5571964960684603848,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G8 GK GZ EK EZ SK R9 RZ RA",
+        "p1_hand": "GU E6 E7 EO EA S7 SZ RU RK",
+        "p2_hand": "G9 GO E8 E9 EU SO R6 R7 RO",
+        "p3_hand": "G6 G7 GA S6 S8 S9 SU SA R8"
+      }
+    },
+    {
+      "id": "random_0006",
+      "seed": 6693612253853443128,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 G9 GU E7 EA S6 SK R7 R9",
+        "p1_hand": "G8 GA E6 E8 EU EO EK SA R6",
+        "p2_hand": "G6 GO E9 S7 S9 SO SZ R8 RZ",
+        "p3_hand": "GK GZ EZ S8 SU RU RO RK RA"
+      }
+    },
+    {
+      "id": "random_0007",
+      "seed": 3681524680245997916,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GA E6 S7 S8 SO SZ R6 R8 RZ",
+        "p1_hand": "G6 G8 EO S6 S9 SK R7 RU RO",
+        "p2_hand": "G9 GO GK E7 E8 EK EZ SA R9",
+        "p3_hand": "G7 GU GZ E9 EU EA SU RK RA"
+      }
+    },
+    {
+      "id": "random_0008",
+      "seed": 4652977597775032072,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 G9 E9 EO S7 S8 SO R6 R9",
+        "p1_hand": "E7 S6 S9 SU SK SA R7 RO RA",
+        "p2_hand": "G6 G8 GK EU EK EZ SZ RU RZ",
+        "p3_hand": "GU GO GZ GA E6 E8 EA R8 RK"
+      }
+    },
+    {
+      "id": "random_0009",
+      "seed": 5589824995834204557,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G8 GU GZ E7 EO EK SU R6 RU",
+        "p1_hand": "E6 E8 EA S8 SA R7 RO RZ RA",
+        "p2_hand": "G7 G9 GO GA S6 SO SK R8 RK",
+        "p3_hand": "G6 GK E9 EU EZ S7 S9 SZ R9"
+      }
+    },
+    {
+      "id": "random_0010",
+      "seed": 6681617824666145170,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GA E7 E8 EK S6 SA R6 R9 RA",
+        "p1_hand": "G8 GZ E9 EO S8 SK R8 RU RZ",
+        "p2_hand": "GU GO GK E6 EU SU SO RO RK",
+        "p3_hand": "G6 G7 G9 EZ EA S7 S9 SZ R7"
+      }
+    },
+    {
+      "id": "random_0011",
+      "seed": 808354260465446114,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 E8 E9 EU S7 S9 SO R7 RO",
+        "p1_hand": "GA E7 EO EK EZ SZ R8 RU RZ",
+        "p2_hand": "G9 GU GK E6 EA S6 S8 SA RK",
+        "p3_hand": "G7 G8 GO GZ SU SK R6 R9 RA"
+      }
+    },
+    {
+      "id": "random_0012",
+      "seed": 6640569302432252728,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 GU E9 EO S7 SO RO RZ RA",
+        "p1_hand": "G9 GO E6 E7 E8 S6 SK R8 RU",
+        "p2_hand": "G8 GK GZ GA EU EA S8 SZ SA",
+        "p3_hand": "G7 EK EZ S9 SU R6 R7 R9 RK"
+      }
+    },
+    {
+      "id": "random_0013",
+      "seed": 376080184252014703,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 GU GO GK E7 EZ R6 R8 R9",
+        "p1_hand": "G6 GA E9 EU S6 SO RU RZ RA",
+        "p2_hand": "G8 G9 E6 E8 S8 S9 SK SA R7",
+        "p3_hand": "GZ EO EK EA S7 SU SZ RO RK"
+      }
+    },
+    {
+      "id": "random_0014",
+      "seed": 8599891094045806380,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 GU E6 E9 EU S8 SU R9 RA",
+        "p1_hand": "G7 GA E8 EK S6 S9 SK SA R7",
+        "p2_hand": "G9 GK E7 EZ S7 SZ R8 RO RZ",
+        "p3_hand": "G8 GO GZ EO EA SO R6 RU RK"
+      }
+    },
+    {
+      "id": "random_0015",
+      "seed": 197443634334327781,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G8 E8 E9 EZ S8 SK SA R6 R9",
+        "p1_hand": "GK GZ GA E6 E7 EO S9 SO RZ",
+        "p2_hand": "G6 G7 G9 GO EU EK S6 SU R7",
+        "p3_hand": "GU EA S7 SZ R8 RU RO RK RA"
+      }
+    },
+    {
+      "id": "random_0016",
+      "seed": 1526074322267248410,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 GO E8 EK EA S9 SO R9 RU",
+        "p1_hand": "G9 GA EZ S6 S7 R6 R7 R8 RO",
+        "p2_hand": "GZ E7 EU EO SU SK SZ RK RZ",
+        "p3_hand": "G7 G8 GU GK E6 E9 S8 SA RA"
+      }
+    },
+    {
+      "id": "random_0017",
+      "seed": 6372954412118230597,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GA E7 E9 S9 SZ R6 R8 R9 RA",
+        "p1_hand": "G6 GU GO E8 EA S6 S8 SO RU",
+        "p2_hand": "G7 E6 EU EZ S7 SU SA RK RZ",
+        "p3_hand": "G8 G9 GK GZ EO EK SK R7 RO"
+      }
+    },
+    {
+      "id": "random_0018",
+      "seed": 8614846243211067538,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 G8 E9 EU EK EA S6 SA R7",
+        "p1_hand": "GZ E6 EZ S8 S9 SU R6 RZ RA",
+        "p2_hand": "G7 GU GO GK E8 EO SO R8 RU",
+        "p3_hand": "G9 GA E7 S7 SK SZ R9 RO RK"
+      }
+    },
+    {
+      "id": "random_0019",
+      "seed": 3415109562036558208,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 G8 E8 S7 S9 SO R7 R9 RA",
+        "p1_hand": "GU GA E6 E9 SU SK R8 RO RZ",
+        "p2_hand": "G9 GO GZ E7 EK EA S8 R6 RK",
+        "p3_hand": "G6 GK EU EO EZ S6 SZ SA RU"
+      }
+    },
+    {
+      "id": "random_0020",
+      "seed": 5564495222166060124,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 GU GO EZ S9 SA R7 RO RA",
+        "p1_hand": "GK E6 E9 S8 SU SZ R8 RU RZ",
+        "p2_hand": "G7 GA E8 EU S6 SK R6 R9 RK",
+        "p3_hand": "G8 G9 GZ E7 EO EK EA S7 SO"
+      }
+    },
+    {
+      "id": "random_0021",
+      "seed": 1785707450648900927,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 G8 G9 E7 E8 E9 EO SO RZ",
+        "p1_hand": "GU GK GZ EK EZ S9 SU RU RK",
+        "p2_hand": "GO GA E6 EU S7 S8 R6 R7 RO",
+        "p3_hand": "G6 EA S6 SK SZ SA R8 R9 RA"
+      }
+    },
+    {
+      "id": "random_0022",
+      "seed": 4702463544710901779,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G9 GU GA E6 E8 E9 S6 SK RK",
+        "p1_hand": "G7 G8 GZ EO EK S9 RU RO RZ",
+        "p2_hand": "EU EZ S7 SO SZ SA R6 R7 R9",
+        "p3_hand": "G6 GO GK E7 EA S8 SU R8 RA"
+      }
+    },
+    {
+      "id": "random_0023",
+      "seed": 1319616618491830094,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GU GA E8 EK EZ S6 S8 S9 SZ",
+        "p1_hand": "G7 E6 E7 E9 SU SK R6 R7 R9",
+        "p2_hand": "G6 G8 G9 GZ EA SO RO RK RZ",
+        "p3_hand": "GO GK EU EO S7 SA R8 RU RA"
+      }
+    },
+    {
+      "id": "random_0024",
+      "seed": 5407502002137774418,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G8 G9 GO GK EO SA R6 RO RZ",
+        "p1_hand": "G6 GU GZ GA S6 SU SZ R7 RK",
+        "p2_hand": "G7 E6 EK EZ S7 SO R8 R9 RA",
+        "p3_hand": "E7 E8 E9 EU EA S8 S9 SK RU"
+      }
+    },
+    {
+      "id": "random_0025",
+      "seed": 3666066666858495254,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GO GK E8 EO EK S7 SK R7 R9",
+        "p1_hand": "G6 G8 GU GZ EU R6 RU RO RK",
+        "p2_hand": "G7 EZ EA S8 SU SO SA RZ RA",
+        "p3_hand": "G9 GA E6 E7 E9 S6 S9 SZ R8"
+      }
+    },
+    {
+      "id": "random_0026",
+      "seed": 8882682202111899593,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GO GA E6 S7 S8 SO R6 R7 RA",
+        "p1_hand": "GZ E7 E8 E9 EO EK S9 SZ RU",
+        "p2_hand": "G9 GK EZ SU SA R8 R9 RO RZ",
+        "p3_hand": "G6 G7 G8 GU EU EA S6 SK RK"
+      }
+    },
+    {
+      "id": "random_0027",
+      "seed": 7363458501770995630,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 G9 GA E6 E7 SU SK R8 RK",
+        "p1_hand": "GZ E8 E9 EK EA S8 SO R6 RZ",
+        "p2_hand": "G8 GU GO EO S9 SZ R9 RO RA",
+        "p3_hand": "G6 GK EU EZ S6 S7 SA R7 RU"
+      }
+    },
+    {
+      "id": "random_0028",
+      "seed": 5998451602727299278,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 GU GK GZ E6 EO EA R7 RK",
+        "p1_hand": "G8 EU SO SZ R6 R8 RU RO RA",
+        "p2_hand": "G6 GO E7 EK S9 SU SA R9 RZ",
+        "p3_hand": "G9 GA E8 E9 EZ S6 S7 S8 SK"
+      }
+    },
+    {
+      "id": "random_0029",
+      "seed": 8141379876001534508,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 G8 GA EK EA SK SA R9 RU",
+        "p1_hand": "GO E6 EO EZ S6 SU R6 R7 RO",
+        "p2_hand": "GU E8 E9 EU S8 SZ RK RZ RA",
+        "p3_hand": "G6 G9 GK GZ E7 S7 S9 SO R8"
+      }
+    },
+    {
+      "id": "random_0030",
+      "seed": 5164245506739989565,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 G8 GK GZ SU SK SZ RU RO",
+        "p1_hand": "E7 E8 E9 EA SA R7 R9 RK RA",
+        "p2_hand": "G6 G9 GO EU EK EZ S9 SO R6",
+        "p3_hand": "GU GA E6 EO S6 S7 S8 R8 RZ"
+      }
+    },
+    {
+      "id": "random_0031",
+      "seed": 3591219186230189598,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G9 GK E8 EZ S6 SO SK SZ R9",
+        "p1_hand": "G6 E6 E7 EA S8 S9 SU RU RA",
+        "p2_hand": "G7 G8 GU GZ EO EK R6 R7 RZ",
+        "p3_hand": "GO GA E9 EU S7 SA R8 RO RK"
+      }
+    },
+    {
+      "id": "random_0032",
+      "seed": 4515084328571140454,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 GU GO GZ EU EA S7 R9 RU",
+        "p1_hand": "EO EK EZ S9 SU SO R6 R7 RK",
+        "p2_hand": "GK GA E6 E8 S8 SK SZ SA RZ",
+        "p3_hand": "G7 G8 G9 E7 E9 S6 R8 RO RA"
+      }
+    },
+    {
+      "id": "random_0033",
+      "seed": 2033782443679246485,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G9 GO GK E9 EO EK S9 R6 R7",
+        "p1_hand": "G7 GU GZ GA S6 SU SA R9 RZ",
+        "p2_hand": "EU EA S7 S8 SK RU RO RK RA",
+        "p3_hand": "G6 G8 E6 E7 E8 EZ SO SZ R8"
+      }
+    },
+    {
+      "id": "random_0034",
+      "seed": 8771929588179826427,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 G7 GU EU EA S7 SO SZ RK",
+        "p1_hand": "G8 GK GA EO S6 SK R7 R8 RO",
+        "p2_hand": "GZ EK EZ S8 S9 R6 R9 RU RA",
+        "p3_hand": "G9 GO E6 E7 E8 E9 SU SA RZ"
+      }
+    },
+    {
+      "id": "random_0035",
+      "seed": 5095692140048874059,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G9 GK GA S6 SK SA R9 RO RK",
+        "p1_hand": "G6 G8 E6 EO EA S8 S9 SZ R8",
+        "p2_hand": "G7 GU E7 E8 EZ SO R7 RZ RA",
+        "p3_hand": "GO GZ E9 EU EK S7 SU R6 RU"
+      }
+    },
+    {
+      "id": "random_0036",
+      "seed": 2684501072902898857,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G8 G9 GO E7 E8 EZ SU SA R6",
+        "p1_hand": "G6 GU GZ EO EA S7 SO RO RA",
+        "p2_hand": "G7 E9 S8 S9 SK SZ R8 RU RK",
+        "p3_hand": "GK GA E6 EU EK S6 R7 R9 RZ"
+      }
+    },
+    {
+      "id": "random_0037",
+      "seed": 1211797348629193032,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GU GK GZ EK EA S6 S9 R8 RZ",
+        "p1_hand": "G7 G9 GA E6 EU SU SO RO RK",
+        "p2_hand": "G8 GO E7 E8 EO EZ S7 SK R6",
+        "p3_hand": "G6 E9 S8 SZ SA R7 R9 RU RA"
+      }
+    },
+    {
+      "id": "random_0038",
+      "seed": 3441436566480765681,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 G9 GA E6 SO SZ R7 R8 RK",
+        "p1_hand": "GK GZ E8 E9 EK EZ S9 SA R9",
+        "p2_hand": "G8 GU GO EA S6 S8 SU SK RZ",
+        "p3_hand": "G7 E7 EU EO S7 R6 RU RO RA"
+      }
+    },
+    {
+      "id": "random_0039",
+      "seed": 8339097973701042681,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 G8 GK GA E8 E9 S6 SO RZ",
+        "p1_hand": "GO GZ EO EZ SA R7 RU RK RA",
+        "p2_hand": "G9 GU E6 E7 EU SU SK SZ R9",
+        "p3_hand": "G7 EK EA S7 S8 S9 R6 R8 RO"
+      }
+    },
+    {
+      "id": "random_0040",
+      "seed": 9128568425842720789,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 GO E6 EU S6 SU SA R8 RO",
+        "p1_hand": "G6 GU GA E9 EZ EA S7 S8 R6",
+        "p2_hand": "GK E7 E8 S9 SK SZ RU RZ RA",
+        "p3_hand": "G8 G9 GZ EO EK SO R7 R9 RK"
+      }
+    },
+    {
+      "id": "random_0041",
+      "seed": 831183367794649227,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "E6 E7 E8 S7 S8 SU SO SA R7",
+        "p1_hand": "G7 GZ EU EO EK EZ SZ R6 RA",
+        "p2_hand": "G8 GU GK S9 R8 R9 RU RO RZ",
+        "p3_hand": "G6 G9 GO GA E9 EA S6 SK RK"
+      }
+    },
+    {
+      "id": "random_0042",
+      "seed": 6693996096605025897,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 EU SU SZ SA R7 R8 RU RA",
+        "p1_hand": "G8 GZ E6 E7 E8 EK S7 R9 RZ",
+        "p2_hand": "G6 G9 GO EZ EA S6 S8 SK RO",
+        "p3_hand": "GU GK GA E9 EO S9 SO R6 RK"
+      }
+    },
+    {
+      "id": "random_0043",
+      "seed": 4608150253620992474,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GZ E7 S7 S9 SU R6 R9 RO RZ",
+        "p1_hand": "G6 G9 GU GO E6 EO EA S6 SK",
+        "p2_hand": "G8 GK GA EK S8 SZ SA RK RA",
+        "p3_hand": "G7 E8 E9 EU EZ SO R7 R8 RU"
+      }
+    },
+    {
+      "id": "random_0044",
+      "seed": 1648576528856332772,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "EU EA S8 SU SK R8 R9 RZ RA",
+        "p1_hand": "G7 GU GA E6 E9 S9 SA R6 RU",
+        "p2_hand": "G6 G8 GO GK E8 EO S6 SZ RO",
+        "p3_hand": "G9 GZ E7 EK EZ S7 SO R7 RK"
+      }
+    },
+    {
+      "id": "random_0045",
+      "seed": 7742451104315647507,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G8 GK E6 EK SK SZ R6 R8 R9",
+        "p1_hand": "GO E7 EU EA S7 S9 R7 RZ RA",
+        "p2_hand": "G9 GU GA E9 EO SU SO RO RK",
+        "p3_hand": "G6 G7 GZ E8 EZ S6 S8 SA RU"
+      }
+    },
+    {
+      "id": "random_0046",
+      "seed": 5289668958665587607,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G8 GU GO GZ E6 S9 SK SZ SA",
+        "p1_hand": "G9 E9 EO EA S7 R7 R8 R9 RK",
+        "p2_hand": "G6 GA EU EK EZ S8 SU RU RZ",
+        "p3_hand": "G7 GK E7 E8 S6 SO R6 RO RA"
+      }
+    },
+    {
+      "id": "random_0047",
+      "seed": 4334129872199441174,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G8 GO E7 S8 SO SK R6 R7 RU",
+        "p1_hand": "G6 GA E6 S6 S9 SU R8 RO RA",
+        "p2_hand": "G7 GU GK GZ E8 E9 EU EK RZ",
+        "p3_hand": "G9 EO EZ EA S7 SZ SA R9 RK"
+      }
+    },
+    {
+      "id": "random_0048",
+      "seed": 8786928996048535767,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 G8 GK EA S7 S8 R6 R9 RK",
+        "p1_hand": "GZ E7 E9 EU EO S9 SK SZ R7",
+        "p2_hand": "GO EK EZ S6 SU SA R8 RZ RA",
+        "p3_hand": "G7 G9 GU GA E6 E8 SO RU RO"
+      }
+    },
+    {
+      "id": "random_0049",
+      "seed": 631046564814393178,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 GO E8 E9 EZ S6 SA RU RA",
+        "p1_hand": "G6 G9 E7 EU EO S7 S8 R6 RZ",
+        "p2_hand": "G8 GU GA E6 SO SZ R7 R9 RK",
+        "p3_hand": "GK GZ EK EA S9 SU SK R8 RO"
+      }
+    },
+    {
+      "id": "random_0050",
+      "seed": 4997423237024851378,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 GA E6 EZ S8 S9 R6 R7 RA",
+        "p1_hand": "GO E7 EU S7 SU SA RU RO RK",
+        "p2_hand": "G9 E8 E9 EO EK S6 SK R8 RZ",
+        "p3_hand": "G6 G8 GU GK GZ EA SO SZ R9"
+      }
+    },
+    {
+      "id": "random_0051",
+      "seed": 6439009578483375312,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GU E7 E9 EA R6 R7 R8 RU RK",
+        "p1_hand": "G7 G9 GK GA EK SU SK RZ RA",
+        "p2_hand": "GO EU EZ S7 S8 S9 SO SZ RO",
+        "p3_hand": "G6 G8 GZ E6 E8 EO S6 SA R9"
+      }
+    },
+    {
+      "id": "random_0052",
+      "seed": 2000414273332910494,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 G7 E8 EO SO SA R7 RU RK",
+        "p1_hand": "GU GO GK GA E7 EU S8 SU R9",
+        "p2_hand": "G8 G9 E6 EZ S6 S9 SK R6 RO",
+        "p3_hand": "GZ E9 EK EA S7 SZ R8 RZ RA"
+      }
+    },
+    {
+      "id": "random_0053",
+      "seed": 4442977014908042988,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GO GA E7 E9 EU EZ S9 R7 RK",
+        "p1_hand": "GU E6 E8 EK EA S8 SK RU RA",
+        "p2_hand": "G6 G7 G8 G9 S7 SZ SA R6 R8",
+        "p3_hand": "GK GZ EO S6 SU SO R9 RO RZ"
+      }
+    },
+    {
+      "id": "random_0054",
+      "seed": 3282449709738983738,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G9 GO GK E9 EK EA SO R7 RO",
+        "p1_hand": "G6 G7 GZ EU EZ S6 S9 SU R9",
+        "p2_hand": "GA E6 S7 SK SZ R8 RU RZ RA",
+        "p3_hand": "G8 GU E7 E8 EO S8 SA R6 RK"
+      }
+    },
+    {
+      "id": "random_0055",
+      "seed": 45932723480164732,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "E6 EU SO SZ R7 R9 RU RK RZ",
+        "p1_hand": "G6 GU GK E7 E9 EK SU R6 RO",
+        "p2_hand": "G8 E8 EZ EA S7 S9 SK SA RA",
+        "p3_hand": "G7 G9 GO GZ GA EO S6 S8 R8"
+      }
+    },
+    {
+      "id": "random_0056",
+      "seed": 8076564877108854350,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GK GA E7 E8 EO EK EA R9 RO",
+        "p1_hand": "G9 E9 EZ S6 S7 SU SZ SA R6",
+        "p2_hand": "G6 GU GO SO R7 R8 RK RZ RA",
+        "p3_hand": "G7 G8 GZ E6 EU S8 S9 SK RU"
+      }
+    },
+    {
+      "id": "random_0057",
+      "seed": 7101610419304920588,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G9 GZ E8 E9 EU S7 S8 SK RZ",
+        "p1_hand": "G8 GK GA E7 EK S6 SU RU RA",
+        "p2_hand": "G7 E6 EZ EA SO R7 R8 R9 RO",
+        "p3_hand": "G6 GU GO EO S9 SZ SA R6 RK"
+      }
+    },
+    {
+      "id": "random_0058",
+      "seed": 1023729364042988370,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G8 GU GA S6 SO SK R6 RO RK",
+        "p1_hand": "G6 G9 GO GZ EU EO S7 R8 RZ",
+        "p2_hand": "E7 E8 EK S8 S9 SU SZ R7 RU",
+        "p3_hand": "G7 GK E6 E9 EZ EA SA R9 RA"
+      }
+    },
+    {
+      "id": "random_0059",
+      "seed": 3307684751061238845,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 G8 GA E7 EK S8 SA RU RZ",
+        "p1_hand": "GU GK GZ E6 E8 EU S6 SK RA",
+        "p2_hand": "GO E9 EO S7 S9 SO R6 R9 RO",
+        "p3_hand": "G7 G9 EZ EA SU SZ R7 R8 RK"
+      }
+    },
+    {
+      "id": "random_0060",
+      "seed": 2257482924794856714,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 G8 E9 EZ S8 SO SZ R8 RK",
+        "p1_hand": "G6 E6 E7 EK S9 RU RO RZ RA",
+        "p2_hand": "G9 GK GZ GA EU S6 SA R7 R9",
+        "p3_hand": "GU GO E8 EO EA S7 SU SK R6"
+      }
+    },
+    {
+      "id": "random_0061",
+      "seed": 6923387309921965368,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G9 GU E8 E9 EU S7 SO SZ R7",
+        "p1_hand": "G7 GZ E6 E7 EK SK R8 R9 RK",
+        "p2_hand": "G6 G8 GK EO EZ EA S6 S8 R6",
+        "p3_hand": "GO GA S9 SU SA RU RO RZ RA"
+      }
+    },
+    {
+      "id": "random_0062",
+      "seed": 4802147941056357557,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GZ E9 EA S7 S8 S9 SO SZ R9",
+        "p1_hand": "E6 EU EK S6 SK SA R6 R8 RZ",
+        "p2_hand": "G7 G8 G9 GK GA E7 E8 EO RK",
+        "p3_hand": "G6 GU GO EZ SU R7 RU RO RA"
+      }
+    },
+    {
+      "id": "random_0063",
+      "seed": 1357620845749500793,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G9 E6 E8 EU EO S7 SZ RU RO",
+        "p1_hand": "GU GO GK GZ GA EZ SA R6 RK",
+        "p2_hand": "E7 E9 EK S6 S9 SK R7 R8 RZ",
+        "p3_hand": "G6 G7 G8 EA S8 SU SO R9 RA"
+      }
+    },
+    {
+      "id": "random_0064",
+      "seed": 5354888234941451884,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 GZ E6 S8 S9 SU SK SA R7",
+        "p1_hand": "GU GO E7 EZ SO SZ R6 R8 RU",
+        "p2_hand": "G6 GK E8 EK EA S6 S7 R9 RO",
+        "p3_hand": "G8 G9 GA E9 EU EO RK RZ RA"
+      }
+    },
+    {
+      "id": "random_0065",
+      "seed": 5153919777833301735,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 GO E6 E8 E9 EO S6 R6 RZ",
+        "p1_hand": "G6 GU EU EZ SO SA R8 RU RK",
+        "p2_hand": "EA S7 S8 S9 SK SZ R7 R9 RO",
+        "p3_hand": "G8 G9 GK GZ GA E7 EK SU RA"
+      }
+    },
+    {
+      "id": "random_0066",
+      "seed": 4686037736769435523,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 GA E7 EZ S7 SA R6 RO RA",
+        "p1_hand": "G8 GK E9 EU EA S6 S8 R8 RK",
+        "p2_hand": "GU GZ E6 S9 SU R7 R9 RU RZ",
+        "p3_hand": "G7 G9 GO E8 EO EK SO SK SZ"
+      }
+    },
+    {
+      "id": "random_0067",
+      "seed": 5873966026310545698,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G8 G9 GK E6 SU SO R6 R9 RO",
+        "p1_hand": "G7 GU E7 EZ EA S9 SK R8 RK",
+        "p2_hand": "GZ E8 E9 EU EO EK S8 SA R7",
+        "p3_hand": "G6 GO GA S6 S7 SZ RU RZ RA"
+      }
+    },
+    {
+      "id": "random_0068",
+      "seed": 9147947036267418791,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GA E6 E8 S9 SK SA R6 RO RZ",
+        "p1_hand": "G8 G9 GK E9 EO S8 R8 RU RK",
+        "p2_hand": "G6 G7 E7 EK S6 S7 SZ R7 RA",
+        "p3_hand": "GU GO GZ EU EZ EA SU SO R9"
+      }
+    },
+    {
+      "id": "random_0069",
+      "seed": 1960158822044900924,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GU GK EK S6 S7 S8 SU SZ R8",
+        "p1_hand": "G7 G8 E9 EU EZ S9 SK R6 RA",
+        "p2_hand": "G6 G9 E6 EA SO SA R9 RK RZ",
+        "p3_hand": "GO GZ GA E7 E8 EO R7 RU RO"
+      }
+    },
+    {
+      "id": "random_0070",
+      "seed": 1757404980855369073,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GU GK GA E9 EO EK SO SA RO",
+        "p1_hand": "G6 G8 GZ S6 SZ R7 R8 RU RK",
+        "p2_hand": "G9 GO E7 E8 EZ S7 R9 RZ RA",
+        "p3_hand": "G7 E6 EU EA S8 S9 SU SK R6"
+      }
+    },
+    {
+      "id": "random_0071",
+      "seed": 6270837172612722183,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 G8 GK E7 EZ S8 SZ SA R9",
+        "p1_hand": "GU E6 E9 S7 S9 SU R6 RO RA",
+        "p2_hand": "G6 G9 GZ GA EU SO R7 R8 RK",
+        "p3_hand": "GO E8 EO EK EA S6 SK RU RZ"
+      }
+    },
+    {
+      "id": "random_0072",
+      "seed": 534203572252280722,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 GU E9 EO S6 SK SZ RU RA",
+        "p1_hand": "G7 G9 GK E8 SO R6 R7 RO RK",
+        "p2_hand": "G8 GO EU EK EA S9 SU SA R9",
+        "p3_hand": "GZ GA E6 E7 EZ S7 S8 R8 RZ"
+      }
+    },
+    {
+      "id": "random_0073",
+      "seed": 1595119509333817064,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G9 GK GZ GA E6 SK SZ RU RK",
+        "p1_hand": "G7 E8 EU EO S6 SA R6 R7 RO",
+        "p2_hand": "GU E9 EZ S7 S9 R8 R9 RZ RA",
+        "p3_hand": "G6 G8 GO E7 EK EA S8 SU SO"
+      }
+    },
+    {
+      "id": "random_0074",
+      "seed": 4509373980243352990,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GO E6 E8 EK S9 SK SA R6 R8",
+        "p1_hand": "G8 GZ E9 EA S6 S8 SU SO SZ",
+        "p2_hand": "G6 G9 GK E7 EO RU RO RK RZ",
+        "p3_hand": "G7 GU GA EU EZ S7 R7 R9 RA"
+      }
+    },
+    {
+      "id": "random_0075",
+      "seed": 1206857869613971533,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 GU EU EZ EA S7 S9 R9 RK",
+        "p1_hand": "GK E8 E9 S8 SO SK R6 R8 RU",
+        "p2_hand": "G7 G8 G9 GO S6 SZ SA R7 RZ",
+        "p3_hand": "GZ GA E6 E7 EO EK SU RO RA"
+      }
+    },
+    {
+      "id": "random_0076",
+      "seed": 7248611831267520708,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 GK GZ E6 EA S8 SU R8 RZ",
+        "p1_hand": "G6 G8 GO EZ S6 S7 SA RU RK",
+        "p2_hand": "G9 E7 E8 S9 SZ R6 R7 R9 RA",
+        "p3_hand": "GU GA E9 EU EO EK SO SK RO"
+      }
+    },
+    {
+      "id": "random_0077",
+      "seed": 3204221317023677139,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 GU GO E7 S6 S8 S9 RZ RA",
+        "p1_hand": "G8 GZ E8 E9 EO SO SA R7 RO",
+        "p2_hand": "G6 G9 EZ SU SK SZ R6 R9 RK",
+        "p3_hand": "GK GA E6 EU EK EA S7 R8 RU"
+      }
+    },
+    {
+      "id": "random_0078",
+      "seed": 7923522733582097762,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G9 GO E8 S8 SU SK SA R6 RK",
+        "p1_hand": "GK GZ E7 EO SZ R7 R8 RU RZ",
+        "p2_hand": "G7 G8 GU E6 E9 EU S9 RO RA",
+        "p3_hand": "G6 GA EK EZ EA S6 S7 SO R9"
+      }
+    },
+    {
+      "id": "random_0079",
+      "seed": 6210321465835903838,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 G8 GK EU EK EZ S6 SO RA",
+        "p1_hand": "GZ GA E7 E8 SK R6 R7 R9 RK",
+        "p2_hand": "G7 GU E6 EO S7 S9 R8 RU RZ",
+        "p3_hand": "G9 GO E9 EA S8 SU SZ SA RO"
+      }
+    },
+    {
+      "id": "random_0080",
+      "seed": 1573570909149610893,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 E8 EU EO S6 S8 R6 R9 RZ",
+        "p1_hand": "G7 GU GZ EZ EA SU SZ RU RK",
+        "p2_hand": "GO GK GA S7 S9 SO SA R8 RA",
+        "p3_hand": "G8 G9 E6 E7 E9 EK SK R7 RO"
+      }
+    },
+    {
+      "id": "random_0081",
+      "seed": 2498174659165807999,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 G7 GO E8 EO S9 SO RK RZ",
+        "p1_hand": "G9 GK GZ GA E7 EZ S6 S7 S8",
+        "p2_hand": "G8 E6 EU EK SZ SA R6 R8 RU",
+        "p3_hand": "GU E9 EA SU SK R7 R9 RO RA"
+      }
+    },
+    {
+      "id": "random_0082",
+      "seed": 6737652319583455306,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GU E7 S7 S9 SK SZ R6 RK RA",
+        "p1_hand": "G7 GK E9 EU EZ SU R9 RO RZ",
+        "p2_hand": "G6 G8 G9 GA E6 EK S6 SO R8",
+        "p3_hand": "GO GZ E8 EO EA S8 SA R7 RU"
+      }
+    },
+    {
+      "id": "random_0083",
+      "seed": 7673282425921209809,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G8 G9 S7 S8 SO R6 R9 RU RZ",
+        "p1_hand": "G6 G7 GO E6 EK EA R8 RO RA",
+        "p2_hand": "GU GA E7 E8 EU S6 SU SK RK",
+        "p3_hand": "GK GZ E9 EO EZ S9 SZ SA R7"
+      }
+    },
+    {
+      "id": "random_0084",
+      "seed": 4488115294599246008,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 G8 E6 E9 EK EZ SU SA RO",
+        "p1_hand": "G7 G9 EA S7 S9 SK SZ R8 R9",
+        "p2_hand": "GU GK GA E7 EO S8 SO R7 RZ",
+        "p3_hand": "GO GZ E8 EU S6 R6 RU RK RA"
+      }
+    },
+    {
+      "id": "random_0085",
+      "seed": 5909892108295569507,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 G8 GO EO S7 R6 R8 R9 RZ",
+        "p1_hand": "G9 GZ E7 E8 S9 SU SZ RO RK",
+        "p2_hand": "E6 EA S6 S8 SK SA R7 RU RA",
+        "p3_hand": "G6 GU GK GA E9 EU EK EZ SO"
+      }
+    },
+    {
+      "id": "random_0086",
+      "seed": 4588272169030841856,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "E8 EK S7 SA R6 R8 R9 RU RA",
+        "p1_hand": "G6 G7 GO GZ E9 EU SO SZ RK",
+        "p2_hand": "GU GK E6 EA S6 S9 SU R7 RO",
+        "p3_hand": "G8 G9 GA E7 EO EZ S8 SK RZ"
+      }
+    },
+    {
+      "id": "random_0087",
+      "seed": 6611257841980255840,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 E9 EK EZ SO SK SZ R6 RK",
+        "p1_hand": "G6 G9 GA EO S7 SU SA R7 RA",
+        "p2_hand": "GZ E8 S6 S8 S9 R8 R9 RU RO",
+        "p3_hand": "G8 GU GO GK E6 E7 EU EA RZ"
+      }
+    },
+    {
+      "id": "random_0088",
+      "seed": 599419807775735658,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "EU EO S7 S8 SK R6 R7 R9 RZ",
+        "p1_hand": "G8 GZ GA E9 S9 SO SZ RU RA",
+        "p2_hand": "G6 G7 GU GK E7 E8 EZ SA RO",
+        "p3_hand": "G9 GO E6 EK EA S6 SU R8 RK"
+      }
+    },
+    {
+      "id": "random_0089",
+      "seed": 2039996129907111736,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 GO GZ E8 S8 SO R8 RU RZ",
+        "p1_hand": "G6 GA E9 EU EK S9 SA R6 RK",
+        "p2_hand": "E7 EO EA S6 S7 SK R7 R9 RO",
+        "p3_hand": "G8 G9 GU GK E6 EZ SU SZ RA"
+      }
+    },
+    {
+      "id": "random_0090",
+      "seed": 6891756424158946379,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 G7 GU GK EK SK SZ RU RO",
+        "p1_hand": "G8 GZ E6 E7 EO EZ S7 R7 RK",
+        "p2_hand": "G9 GO GA EA SO R6 R8 R9 RA",
+        "p3_hand": "E8 E9 EU S6 S8 S9 SU SA RZ"
+      }
+    },
+    {
+      "id": "random_0091",
+      "seed": 692834361418610367,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GU GZ E6 EO S6 S7 SZ SA RO",
+        "p1_hand": "G6 G8 G9 EZ EA SK R9 RZ RA",
+        "p2_hand": "GO GA E7 E8 EU EK SO R8 RU",
+        "p3_hand": "G7 GK E9 S8 S9 SU R6 R7 RK"
+      }
+    },
+    {
+      "id": "random_0092",
+      "seed": 6404583508880519274,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 E7 E9 EU SU SO R6 RK RZ",
+        "p1_hand": "GA E6 EK EZ S7 S9 SK SZ R8",
+        "p2_hand": "G7 G9 GU GO GK EO S8 RU RO",
+        "p3_hand": "G8 GZ E8 EA S6 SA R7 R9 RA"
+      }
+    },
+    {
+      "id": "random_0093",
+      "seed": 2898516915703501250,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G7 G9 EO EZ S6 R6 R7 R8 RO",
+        "p1_hand": "GU GO GK E8 EU S7 SZ SA RA",
+        "p2_hand": "GZ GA E9 EA S8 SO SK RU RK",
+        "p3_hand": "G6 G8 E6 E7 EK S9 SU R9 RZ"
+      }
+    },
+    {
+      "id": "random_0094",
+      "seed": 7404929464276567463,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GZ E7 E8 EA S8 SK SA R8 RZ",
+        "p1_hand": "G7 GU GK EZ S7 R6 R7 RO RK",
+        "p2_hand": "G6 E6 E9 EU EO EK S6 SO SZ",
+        "p3_hand": "G8 G9 GO GA S9 SU R9 RU RA"
+      }
+    },
+    {
+      "id": "random_0095",
+      "seed": 2691034927240014000,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G9 GU GA E6 E8 EZ S9 SA RZ",
+        "p1_hand": "G7 GK E9 EA SU SO SZ RO RA",
+        "p2_hand": "G8 GZ E7 EO EK S8 R7 R8 RK",
+        "p3_hand": "G6 GO EU S6 S7 SK R6 R9 RU"
+      }
+    },
+    {
+      "id": "random_0096",
+      "seed": 1464109675719500193,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G8 G9 GU E6 E8 EA S7 R8 RU",
+        "p1_hand": "G6 E9 EZ S8 SU SO SA R7 RK",
+        "p2_hand": "GK GZ GA EU SK R9 RO RZ RA",
+        "p3_hand": "G7 GO E7 EO EK S6 S9 SZ R6"
+      }
+    },
+    {
+      "id": "random_0097",
+      "seed": 3691930200966714989,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "GO E7 E9 EK S6 SU R9 RK RA",
+        "p1_hand": "G7 E6 EU EZ S9 SZ R6 R8 RU",
+        "p2_hand": "G6 G8 GU GK EO EA S7 SO RZ",
+        "p3_hand": "G9 GZ GA E8 S8 SK SA R7 RO"
+      }
+    },
+    {
+      "id": "random_0098",
+      "seed": 5172253915586247542,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 GU E8 EO S6 SU SO SA R8",
+        "p1_hand": "GA E6 E7 EK S7 R6 R7 RO RA",
+        "p2_hand": "G7 G8 G9 GZ EA SK R9 RU RZ",
+        "p3_hand": "GO GK E9 EU EZ S8 S9 SZ RK"
+      }
+    },
+    {
+      "id": "random_0099",
+      "seed": 6212128869341035668,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 G9 GO EZ SK R7 R8 RK RA",
+        "p1_hand": "GU GK GA E6 EA S6 SU R6 R9",
+        "p2_hand": "E8 E9 EU EK S9 SO RU RO RZ",
+        "p3_hand": "G7 G8 GZ E7 EO S7 S8 SZ SA"
+      }
+    },
+    {
+      "id": "random_0100",
+      "seed": 7624611942827617592,
+      "notes": "generated via ml_server shuffle, explicit hands for editing",
+      "hands": {
+        "p0_hand": "G6 GU GA E9 EA S6 SK R6 RO",
+        "p1_hand": "G8 GO E7 EO S8 R7 R8 R9 RU",
+        "p2_hand": "G9 GK E6 E8 EU EZ SA RZ RA",
+        "p3_hand": "G7 GZ EK S7 S9 SU SO SZ RK"
+      }
+    }
+  ]
+}

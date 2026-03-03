@@ -36,6 +36,7 @@ pip-wheel-metadata/
 ml/checkpoints/
 ml/runs/
 ml/.runtime_bins/
+ml/eval/logs/
 *.pt
 *.onnx
 *.safetensors

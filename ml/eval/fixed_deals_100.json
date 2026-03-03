@@ -1,0 +1,507 @@
+﻿{
+    "version":  1,
+    "description":  "Default 100-game deterministic fixed-deal suite (seed-based). Replace/extend with explicit hands to target edge cases.",
+    "card_encoding":  "0..35, suit-major (g,e,s,r) x value (6,7,8,9,U,O,K,10,A)",
+    "cases":  [
+                  {
+                      "id":  "seed_0001",
+                      "seed":  1,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0002",
+                      "seed":  2,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0003",
+                      "seed":  3,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0004",
+                      "seed":  4,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0005",
+                      "seed":  5,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0006",
+                      "seed":  6,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0007",
+                      "seed":  7,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0008",
+                      "seed":  8,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0009",
+                      "seed":  9,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0010",
+                      "seed":  10,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0011",
+                      "seed":  11,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0012",
+                      "seed":  12,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0013",
+                      "seed":  13,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0014",
+                      "seed":  14,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0015",
+                      "seed":  15,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0016",
+                      "seed":  16,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0017",
+                      "seed":  17,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0018",
+                      "seed":  18,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0019",
+                      "seed":  19,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0020",
+                      "seed":  20,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0021",
+                      "seed":  21,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0022",
+                      "seed":  22,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0023",
+                      "seed":  23,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0024",
+                      "seed":  24,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0025",
+                      "seed":  25,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0026",
+                      "seed":  26,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0027",
+                      "seed":  27,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0028",
+                      "seed":  28,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0029",
+                      "seed":  29,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0030",
+                      "seed":  30,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0031",
+                      "seed":  31,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0032",
+                      "seed":  32,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0033",
+                      "seed":  33,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0034",
+                      "seed":  34,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0035",
+                      "seed":  35,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0036",
+                      "seed":  36,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0037",
+                      "seed":  37,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0038",
+                      "seed":  38,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0039",
+                      "seed":  39,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0040",
+                      "seed":  40,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0041",
+                      "seed":  41,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0042",
+                      "seed":  42,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0043",
+                      "seed":  43,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0044",
+                      "seed":  44,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0045",
+                      "seed":  45,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0046",
+                      "seed":  46,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0047",
+                      "seed":  47,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0048",
+                      "seed":  48,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0049",
+                      "seed":  49,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0050",
+                      "seed":  50,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0051",
+                      "seed":  51,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0052",
+                      "seed":  52,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0053",
+                      "seed":  53,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0054",
+                      "seed":  54,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0055",
+                      "seed":  55,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0056",
+                      "seed":  56,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0057",
+                      "seed":  57,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0058",
+                      "seed":  58,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0059",
+                      "seed":  59,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0060",
+                      "seed":  60,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0061",
+                      "seed":  61,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0062",
+                      "seed":  62,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0063",
+                      "seed":  63,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0064",
+                      "seed":  64,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0065",
+                      "seed":  65,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0066",
+                      "seed":  66,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0067",
+                      "seed":  67,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0068",
+                      "seed":  68,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0069",
+                      "seed":  69,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0070",
+                      "seed":  70,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0071",
+                      "seed":  71,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0072",
+                      "seed":  72,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0073",
+                      "seed":  73,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0074",
+                      "seed":  74,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0075",
+                      "seed":  75,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0076",
+                      "seed":  76,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0077",
+                      "seed":  77,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0078",
+                      "seed":  78,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0079",
+                      "seed":  79,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0080",
+                      "seed":  80,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0081",
+                      "seed":  81,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0082",
+                      "seed":  82,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0083",
+                      "seed":  83,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0084",
+                      "seed":  84,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0085",
+                      "seed":  85,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0086",
+                      "seed":  86,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0087",
+                      "seed":  87,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0088",
+                      "seed":  88,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0089",
+                      "seed":  89,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0090",
+                      "seed":  90,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0091",
+                      "seed":  91,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0092",
+                      "seed":  92,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0093",
+                      "seed":  93,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0094",
+                      "seed":  94,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0095",
+                      "seed":  95,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0096",
+                      "seed":  96,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0097",
+                      "seed":  97,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0098",
+                      "seed":  98,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0099",
+                      "seed":  99,
+                      "notes":  "deterministic shuffle seed"
+                  },
+                  {
+                      "id":  "seed_0100",
+                      "seed":  100,
+                      "notes":  "deterministic shuffle seed"
+                  }
+              ]
+}

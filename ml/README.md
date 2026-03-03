@@ -10,6 +10,23 @@ Current runtime default:
 - Model family defaults to `parallel_v2` across training/inference scripts.
 - `legacy` remains supported only as an explicit opt-in (`--model-family legacy`) for compatibility/baselines.
 
+Fixed-deal evaluation (v2 workflow):
+
+- Suite files: `ml/eval/fixed_deals_100.json` and `ml/eval/fixed_deals_custom_template.json`
+- Evaluator: `ml/eval_fixed_deals.py`
+- Supports:
+  - exact fixed hands (`hands`) or deterministic seeded deals (`seed`)
+  - per-seat checkpoint selection (`--p0/--p1/--p2/--p3` or `--all-checkpoint`)
+  - checkpoint discovery (`--list-checkpoints`) and interactive selection (`--interactive-select`)
+  - condensed trick/action logs to file (`--output`) and optional live console mirror (`--echo`)
+
+Training quality logs (v2):
+
+- `ml/train_online.py` now prints round-level bid/pass/play diagnostics in summary:
+  - bidding: average highest bid, contract-made rate, pass-game rate
+  - passing/play: playing-vs-defending trick split, trump-call ratio vs possible pairs
+  - extra quality: schwarz rate, first-trick win rate for playing party, question pressure
+
 A deep RL + Transformer approach to learning Marjapussi, trained from endgame outward.
 
 ---

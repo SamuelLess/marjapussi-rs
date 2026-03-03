@@ -21,6 +21,11 @@ Execution plans:
 
 1. `PLAN_V2_IMPLEMENTATION_TASKLIST.md`
 
+Operational tooling:
+
+1. Fixed-deal evaluator: `ml/eval_fixed_deals.py`
+2. Editable suites: `ml/eval/fixed_deals_100.json`, `ml/eval/fixed_deals_custom_template.json`
+
 Order of implementation should follow:
 
 1. Observation privacy and reward correctness first.

@@ -401,3 +401,18 @@ ui checkpoint="latest" port="8765": install-ml-deps ensure-ml-server-ui-runtime
       case "$ui_port" in port=*) ui_port="${ui_port#port=}" ;; esac; \
       echo "Starting UI server (http://localhost:$ui_port) with checkpoint=$ui_ckpt ..."; \
       ML_SERVER_BIN="{{ui_ml_server_bin}}" exec {{python}} ml/ui_server.py --port "$ui_port" --checkpoint "$ui_ckpt"
+
+# Evaluate checkpoints on deterministic fixed-deal suites.
+# Example:
+#   just eval-fixed checkpoint=latest max_cases=10
+#   just eval-fixed checkpoint=1 echo=0
+eval-fixed suite="ml/eval/fixed_deals_100.json" checkpoint="latest" max_cases="0" echo="1": install-ml-deps ensure-ml-server-release
+    @echo_flag="{{echo}}"; \
+      case "$echo_flag" in echo=*) echo_flag="${echo_flag#echo=}" ;; esac; \
+      echo_opt=""; \
+      if [ "$echo_flag" = "1" ]; then echo_opt="--echo"; fi; \
+      ML_SERVER_BIN="{{ml_server_bin}}" {{python}} ml/eval_fixed_deals.py --suite "{{suite}}" --all-checkpoint "{{checkpoint}}" --max-cases "{{max_cases}}" $echo_opt
+
+# Generate random fixed-deal suites (explicit 4x9 hands) via ml_server.
+gen-fixed-deals count="100" output="ml/eval/fixed_deals_random_100.json" master_seed="20260303": install-ml-deps ensure-ml-server-release
+    ML_SERVER_BIN="{{ml_server_bin}}" {{python}} ml/generate_fixed_deals.py --count "{{count}}" --master-seed "{{master_seed}}" --output "{{output}}"

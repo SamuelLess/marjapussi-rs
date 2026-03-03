@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::game::cards::{self, Card, Suit};
 use crate::game::gameinfo::GameFinishedInfo;
 use crate::game::gamestate::GamePhase;
 use crate::game::player::PlaceAtTable;
@@ -26,6 +27,10 @@ pub enum Request {
     NewGame {
         #[serde(default)]
         seed: Option<u64>,
+        /// Optional absolute seat hands as card indices [4][9].
+        /// If provided, overrides seed/random dealing.
+        #[serde(default)]
+        fixed_hands: Option<Vec<Vec<usize>>>,
         /// POV seat index (0..3). Defaults to 0.
         #[serde(default)]
         pov: u8,
@@ -122,9 +127,18 @@ pub struct OutcomeJson {
     pub no_one_played: bool,
     pub schwarz: bool,
     pub game_value: i32,
+    pub highest_bid: i32,
     pub team_points: [i32; 2],
     pub playing_party: Option<u8>,
     pub tricks: Vec<TrickOutcome>,
+    pub contract_made: Option<bool>,
+    pub playing_party_tricks: Option<u8>,
+    pub defending_party_tricks: Option<u8>,
+    pub playing_called_trumps: Option<u8>,
+    pub playing_possible_pairs: Option<u8>,
+    pub playing_questions: Option<u8>,
+    pub defending_questions: Option<u8>,
+    pub first_trick_playing_won: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -142,12 +156,134 @@ pub struct BranchResult {
     pub outcomes: Vec<OutcomeJson>,
 }
 
+fn suit_index(suit: Suit) -> usize {
+    match suit {
+        Suit::Green => 0,
+        Suit::Acorns => 1,
+        Suit::Bells => 2,
+        Suit::Red => 3,
+    }
+}
+
+fn decode_fixed_hands(raw: &[Vec<usize>]) -> Result<[Vec<Card>; 4], String> {
+    if raw.len() != 4 {
+        return Err(format!(
+            "fixed_hands must contain exactly 4 seat hands, got {}",
+            raw.len()
+        ));
+    }
+    let deck = cards::get_all_cards();
+    let mut seen = [false; 36];
+    let mut out: [Vec<Card>; 4] = [vec![], vec![], vec![], vec![]];
+
+    for (seat_idx, hand) in raw.iter().enumerate() {
+        if hand.len() != 9 {
+            return Err(format!(
+                "fixed_hands[{seat_idx}] must contain exactly 9 cards, got {}",
+                hand.len()
+            ));
+        }
+        let mut decoded = Vec::with_capacity(9);
+        for &card_idx in hand {
+            if card_idx >= deck.len() {
+                return Err(format!("fixed_hands[{seat_idx}] contains invalid card index {card_idx}"));
+            }
+            if seen[card_idx] {
+                return Err(format!("fixed_hands contains duplicate card index {card_idx}"));
+            }
+            seen[card_idx] = true;
+            decoded.push(deck[card_idx].clone());
+        }
+        out[seat_idx] = decoded;
+    }
+
+    let missing: Vec<usize> = (0..36).filter(|idx| !seen[*idx]).collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "fixed_hands must contain all 36 unique cards; missing indices: {:?}",
+            missing
+        ));
+    }
+
+    Ok(out)
+}
+
 fn info_to_outcome(info: &GameFinishedInfo) -> OutcomeJson {
+    let highest_bid = info
+        .bidding_history
+        .iter()
+        .filter_map(|(a, _)| match a {
+            ActionType::NewBid(v) => Some(*v),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(115);
+
+    let mut playing_party_tricks: Option<u8> = None;
+    let mut defending_party_tricks: Option<u8> = None;
+    let mut playing_called_trumps: Option<u8> = None;
+    let mut playing_possible_pairs: Option<u8> = None;
+    let mut playing_questions: Option<u8> = None;
+    let mut defending_questions: Option<u8> = None;
+    let mut first_trick_playing_won: Option<bool> = None;
+
+    if let Some(playing_party) = info.playing_party.clone() {
+        let party_idx = playing_party.0 % 2;
+
+        let p_tricks = info
+            .tricks
+            .iter()
+            .filter(|t| t.winner.party().0 == party_idx)
+            .count() as u8;
+        let d_tricks = info.tricks.len().saturating_sub(p_tricks as usize) as u8;
+        playing_party_tricks = Some(p_tricks);
+        defending_party_tricks = Some(d_tricks);
+        first_trick_playing_won = info
+            .tricks
+            .first()
+            .map(|t| t.winner.party().0 == party_idx);
+
+        let mut called = [false; 4];
+        let mut q_play: u8 = 0;
+        let mut q_def: u8 = 0;
+        for event in &info.all_events {
+            if let ActionType::Question(_) = &event.last_action.action_type {
+                if event.last_action.player.party().0 == party_idx {
+                    q_play = q_play.saturating_add(1);
+                } else {
+                    q_def = q_def.saturating_add(1);
+                }
+            }
+            if let Some(crate::game::gameevent::GameCallback::NewTrump(suit)) = &event.callback {
+                if event.last_action.player.party().0 == party_idx {
+                    called[suit_index(*suit)] = true;
+                }
+            }
+        }
+        playing_called_trumps = Some(called.iter().filter(|v| **v).count() as u8);
+        playing_questions = Some(q_play);
+        defending_questions = Some(q_def);
+
+        if let Some(after_passing) = &info.after_passing {
+            let mut possible = [false; 4];
+            let seat_a = party_idx as usize;
+            let seat_b = ((party_idx + 2) % 4) as usize;
+            for suit in cards::pairs(after_passing[seat_a].clone()) {
+                possible[suit_index(suit)] = true;
+            }
+            for suit in cards::pairs(after_passing[seat_b].clone()) {
+                possible[suit_index(suit)] = true;
+            }
+            playing_possible_pairs = Some(possible.iter().filter(|v| **v).count() as u8);
+        }
+    }
+
     OutcomeJson {
         won: info.won,
         no_one_played: info.no_one_played,
         schwarz: info.schwarz_game,
         game_value: info.game_value.0,
+        highest_bid,
         team_points: info.team_points,
         playing_party: info.playing_party.clone().map(|p| p.party().0),
         tricks: info.tricks.iter().map(|t| TrickOutcome {
@@ -155,6 +291,14 @@ fn info_to_outcome(info: &GameFinishedInfo) -> OutcomeJson {
             points: t.points.0,
             cards: t.cards.iter().map(|c| format!("{}", c)).collect(),
         }).collect(),
+        contract_made: info.won,
+        playing_party_tricks,
+        defending_party_tricks,
+        playing_called_trumps,
+        playing_possible_pairs,
+        playing_questions,
+        defending_questions,
+        first_trick_playing_won,
     }
 }
 
@@ -288,16 +432,21 @@ impl Server {
 
     pub fn handle(&mut self, req: Request) -> Response {
         match req {
-            Request::NewGame { seed, pov, start_trick, include_labels } => {
+            Request::NewGame { seed, fixed_hands, pov, start_trick, include_labels } => {
                 self.pov = PlaceAtTable(pov);
                 self.include_labels = include_labels;
                 let names = ["P0", "P1", "P2", "P3"].map(|s| s.to_string());
                 
-                let cards = if let Some(s) = seed {
+                let cards = if let Some(hands) = fixed_hands {
+                    match decode_fixed_hands(&hands) {
+                        Ok(decoded) => Some(decoded),
+                        Err(msg) => return Response::Error { message: msg },
+                    }
+                } else if let Some(s) = seed {
                     use rand::SeedableRng;
                     // Seed the RNG deterministically
                     let mut r = rand::rngs::StdRng::seed_from_u64(s);
-                    let mut deck = crate::game::cards::get_all_cards();
+                    let mut deck = cards::get_all_cards();
                     use rand::seq::SliceRandom;
                     deck.shuffle(&mut r);
                     
@@ -839,5 +988,38 @@ mod tests {
 
         seat_obs = obs_from_response(server.handle(Request::ObservePov { pov: active }));
         assert!(!seat_obs.pass_selection_indices.is_empty());
+    }
+
+    #[test]
+    fn new_game_accepts_fixed_hands() {
+        let fixed_hands = vec![
+            (0..9).collect::<Vec<_>>(),
+            (9..18).collect::<Vec<_>>(),
+            (18..27).collect::<Vec<_>>(),
+            (27..36).collect::<Vec<_>>(),
+        ];
+
+        let mut server = Server::new();
+        let _obs = obs_from_response(server.handle(Request::NewGame {
+            seed: None,
+            fixed_hands: Some(fixed_hands.clone()),
+            pov: 0,
+            start_trick: None,
+            include_labels: false,
+        }));
+
+        let debug = match server.handle(Request::ObserveDebug) {
+            Response::DebugObs { debug } => debug,
+            other => panic!("expected debug obs response, got {:?}", other),
+        };
+        assert_eq!(debug.all_hands.len(), 4);
+
+        for seat in 0..4 {
+            let mut got = debug.all_hands[seat].clone();
+            let mut exp = fixed_hands[seat].clone();
+            got.sort();
+            exp.sort();
+            assert_eq!(got, exp);
+        }
     }
 }
