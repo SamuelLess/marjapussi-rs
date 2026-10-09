@@ -2,7 +2,7 @@ use std::ops::{Add, AddAssign};
 
 use serde::Serialize;
 
-use crate::game::cards::{Card, Suit, Value};
+use crate::game::cards::{Card, Suit};
 use crate::game::player::PlaceAtTable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -21,24 +21,33 @@ impl AddAssign for Points {
     }
 }
 
-pub fn points_pair(suit: Suit) -> Points {
-    match suit {
-        Suit::Red => Points(100),
-        Suit::Bells => Points(80),
-        Suit::Acorns => Points(60),
-        Suit::Green => Points(40),
+/// The point table (single owner): points of a card by `Value`, in enum order
+/// (6, 7, 8, 9, Unter, Ober, King, Ten, Ace).
+pub const VALUE_POINTS: [i32; 9] = [0, 0, 0, 0, 2, 3, 4, 10, 11];
+
+/// Points of an announced pair by `Suit`, in enum order (Green, Acorns, Bells, Red).
+pub const PAIR_POINTS: [i32; 4] = [40, 60, 80, 100];
+
+/// Bonus for winning the last trick.
+pub const LAST_TRICK_BONUS: i32 = 20;
+
+/// Points of each card by bit index (`bits::index`), derived from `VALUE_POINTS`.
+pub const CARD_POINTS: [u8; 36] = {
+    let mut t = [0u8; 36];
+    let mut i = 0;
+    while i < 36 {
+        t[i] = VALUE_POINTS[i % 9] as u8;
+        i += 1;
     }
+    t
+};
+
+pub fn points_pair(suit: Suit) -> Points {
+    Points(PAIR_POINTS[suit as usize])
 }
 
 pub fn points_card(card: Card) -> Points {
-    match card.value {
-        Value::Ace => Points(11),
-        Value::Ten => Points(10),
-        Value::King => Points(4),
-        Value::Ober => Points(3),
-        Value::Unter => Points(2),
-        _ => Points(0),
-    }
+    Points(VALUE_POINTS[card.value as usize])
 }
 
 pub fn points_trick(trick: Vec<Card>) -> Points {

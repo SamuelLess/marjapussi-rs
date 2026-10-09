@@ -1,24 +1,23 @@
-#![allow(unused)]
-
-use std::cmp::max;
 use std::fmt;
 
-use itertools::concat;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
+use crate::bits::{self, CardSet};
 use crate::game::parse::parse_card;
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, DeserializeFromStr, SerializeDisplay)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, DeserializeFromStr, SerializeDisplay,
+)]
 pub struct Card {
     /// Only compare cards with same color
     pub suit: Suit,
     pub value: Value,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, EnumIter, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, EnumIter, Serialize)]
 pub enum Suit {
     Green,
     Acorns,
@@ -32,7 +31,7 @@ impl fmt::Display for Suit {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, EnumIter, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, EnumIter, Serialize)]
 pub enum Value {
     Six,
     Seven,
@@ -55,14 +54,7 @@ impl fmt::Display for Value {
  * Returns whether first card is higher than second card.
  */
 pub fn is_higher_card(higher: &Card, lower: &Card, trump: Option<Suit>) -> bool {
-    match trump {
-        Some(suit) => {
-            //println!("{:?} {:?} {:?}", higher, lower, trump);
-            (higher.suit == suit && lower.suit != suit)
-                || (higher.suit == lower.suit && higher.value > lower.value)
-        }
-        None => higher.suit == lower.suit && higher.value > lower.value,
-    }
+    bits::takes(bits::index(higher), bits::index(lower), trump)
 }
 
 pub fn higher_cards(card: &Card, trump: Option<Suit>, pool: Option<Vec<Card>>) -> Vec<Card> {
@@ -72,165 +64,57 @@ pub fn higher_cards(card: &Card, trump: Option<Suit>, pool: Option<Vec<Card>>) -
         .collect()
 }
 
-/**
- * Returns highest card if exists.
- */
+/// The card that currently wins the trick, if any (rule owner: `bits::trick_winner`).
 pub fn high_card(trick: Vec<&Card>, trump: Option<Suit>) -> Option<&Card> {
-    if trick.is_empty() {
-        return None;
-    }
-    let trick_suit = trick[0].suit;
-    Some(
-        match trump {
-            Some(trump_suit) => {
-                //if any trump in trick only count trump
-                let all_suits: Vec<Suit> = trick.iter().map(|c| c.suit).rev().collect();
-                if all_suits.contains(&trump_suit) {
-                    trick
-                        .into_iter()
-                        .filter(|x| x.suit == trump_suit)
-                        .collect::<Vec<_>>()
-                } else {
-                    trick.into_iter().filter(|x| x.suit == trick_suit).collect()
-                }
-            }
-            None => trick.into_iter().filter(|x| x.suit == trick_suit).collect(),
+    trick.into_iter().reduce(|winner, card| {
+        if card == winner || bits::takes(bits::index(card), bits::index(winner), trump) {
+            card
+        } else {
+            winner
         }
-        .iter()
-        .reduce(max)
-        .unwrap(),
-    )
+    })
 }
 
-/**
- * Only for the first played card in the game. Proper play in rest of first trick handled elsewhere.
- */
+/// Keeps the cards of `cards` that are in `allowed`, in their original order.
+fn keep(cards: Vec<&Card>, allowed: CardSet) -> Vec<&Card> {
+    let mut cards = cards;
+    cards.retain(|c| allowed.contains(bits::index(c)));
+    cards
+}
+
+/// Only for the first played card in the game. Proper play in rest of first trick handled elsewhere.
 pub fn allowed_first(cards: Vec<&Card>) -> Vec<&Card> {
-    let mut allowed = cards
-        .clone()
-        .into_iter()
-        .filter(|c| c.value == Value::Ace)
-        .collect::<Vec<_>>();
-    if allowed.is_empty() {
-        allowed = cards
-            .clone()
-            .into_iter()
-            .filter(|c| c.suit == Suit::Green)
-            .collect::<Vec<_>>();
-    }
-    if allowed.is_empty() {
-        cards
-    } else {
-        allowed
-    }
+    allowed_cards(vec![], cards, None, true)
 }
 
-/**
- * Returns general high card.
- */
+/// The cards of `cards` that may be played into `trick`, in hand order
+/// (the rule: `bits::play_levels`).
 pub fn allowed_cards<'a>(
     trick: Vec<&'a Card>,
     cards: Vec<&'a Card>,
     trump: Option<Suit>,
     first_trick: bool,
 ) -> Vec<&'a Card> {
-    let current_high_card = high_card(trick.clone(), trump);
-    /*println!(
-        "trick={:?} wiht cards={:?} and trump={:?}",
-        trick, cards, trump
-    );*/
-    match current_high_card {
-        Some(current_high_card) => {
-            let trick_suit = trick[0].suit;
-            if first_trick {
-                let first_trick_ace: Vec<&Card> = cards
-                    .clone()
-                    .into_iter()
-                    .filter(|c| c.suit == trick_suit && c.value == Value::Ace)
-                    .collect();
-                if first_trick_ace.len() == 1 {
-                    return first_trick_ace;
-                }
-            }
-            let same_color_cards: Vec<&Card> = cards
-                .clone()
-                .into_iter()
-                .filter(|c: &&Card| c.suit == trick_suit)
-                .collect();
-            let higher_cards: Vec<&Card> = cards
-                .clone()
-                .into_iter()
-                .filter(|c| {
-                    high_card(concat([trick.clone(), vec![c]]), trump) > Some(current_high_card)
-                })
-                .collect();
-            let higher_same_color = higher_cards
-                .clone()
-                .into_iter()
-                .filter(|c| c.suit == trick_suit)
-                .collect::<Vec<_>>();
-            if !higher_same_color.is_empty() {
-                return higher_same_color;
-            }
-            if !same_color_cards.is_empty() {
-                return same_color_cards;
-            }
-            if !higher_cards.is_empty() {
-                return higher_cards;
-            }
-            if let Some(trump_suit) = trump {
-                let trump_cards: Vec<&Card> = cards
-                    .clone()
-                    .into_iter()
-                    .filter(|c| c.suit == trump_suit)
-                    .collect();
-                if !trump_cards.is_empty() {
-                    return trump_cards;
-                }
-            }
-            cards
-        }
-        None => {
-            //the trick has to be empty
-            if first_trick {
-                allowed_first(cards)
-            } else {
-                cards
-            }
-        }
-    }
+    let idx: Vec<_> = trick.into_iter().map(bits::index).collect();
+    let hand = CardSet::from_cards(cards.iter().copied());
+    let allowed = bits::play_levels(&idx, trump, first_trick).allowed(hand);
+    keep(cards, allowed)
 }
 
+/// Suits of which `cards` hold the King or the Ober.
 pub fn halves(cards: Vec<Card>) -> Vec<Suit> {
-    let mut halves: Vec<Suit> = vec![];
-    for suit in Suit::iter() {
-        if cards.contains(&Card {
-            suit,
-            value: Value::Ober,
-        }) || cards.contains(&Card {
-            suit,
-            value: Value::King,
-        }) {
-            halves.push(suit);
-        }
-    }
-    halves
+    let hand = CardSet::from_cards(&cards);
+    Suit::iter()
+        .filter(|&s| !(hand & CardSet::halves(s)).is_empty())
+        .collect()
 }
 
+/// Suits of which `cards` hold both the King and the Ober.
 pub fn pairs(cards: Vec<Card>) -> Vec<Suit> {
-    let mut halves: Vec<Suit> = vec![];
-    for suit in Suit::iter() {
-        if cards.contains(&Card {
-            suit,
-            value: Value::Ober,
-        }) && cards.contains(&Card {
-            suit,
-            value: Value::King,
-        }) {
-            halves.push(suit);
-        }
-    }
-    halves
+    let hand = CardSet::from_cards(&cards);
+    Suit::iter()
+        .filter(|&s| CardSet::halves(s).is_subset(hand))
+        .collect()
 }
 
 pub fn get_all_cards() -> Vec<Card> {
@@ -290,14 +174,6 @@ mod tests {
 
     #[test]
     fn test_is_higher_card() {
-        let ra = Card {
-            suit: Suit::Red,
-            value: Value::Ace,
-        };
-        let sz = Card {
-            suit: Suit::Bells,
-            value: Value::Ten,
-        };
         let ra: Card = "r-A".parse().unwrap();
         let sz: Card = "s-Z".parse().unwrap();
         let su: Card = "s-U".parse().unwrap();
@@ -357,7 +233,6 @@ mod tests {
 
     #[test]
     fn test_allowed_cards() {
-        let ra: Card = "r-A".parse().unwrap();
         let ga: Card = "g-A".parse().unwrap();
         let gz: Card = "g-Z".parse().unwrap();
         let go: Card = "g-O".parse().unwrap();
@@ -367,7 +242,6 @@ mod tests {
         let ro: Card = "r-O".parse().unwrap();
         let ru: Card = "r-U".parse().unwrap();
         let gu: Card = "g-U".parse().unwrap();
-        let r9: Card = "r-9".parse().unwrap();
         let g9: Card = "g-9".parse().unwrap();
         let mut cards: Vec<&Card> = vec![];
         let trick: Vec<&Card> = vec![];

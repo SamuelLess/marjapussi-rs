@@ -1,4 +1,5 @@
-use std::time::SystemTime;
+use std::cell::RefCell;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::offset::Local;
 use chrono::DateTime;
@@ -50,63 +51,59 @@ impl Game {
 
     /// Creates list with all legal actions in the current state of the game.
     pub fn legal_actions(&self) -> Vec<GameAction> {
-        let mut legal = self.state.phase.legal_actions(self);
-        let disallow_undo: Vec<GamePhase> = vec![
-            GamePhase::WaitingForStart,
-            GamePhase::Ended,
-            GamePhase::PassingBack,
-            GamePhase::Raising,
-        ];
-        if disallow_undo.contains(&self.state.phase) {
-            return legal;
-        }
-        // disallow undo special cases
-        match self.state.phase.clone() {
-            GamePhase::PendingUndo(_) => {
-                return legal.clone();
-            }
-            GamePhase::Bidding => {
-                if self.state.value == Points(115) {
-                    return legal.clone();
-                }
-            }
+        let mut legal = vec![];
+        self.push_legal_actions(&mut legal);
+        legal
+    }
+
+    fn push_legal_actions(&self, legal: &mut Vec<GameAction>) {
+        self.state.phase.push_legal_actions(self, legal);
+        match self.state.phase {
+            GamePhase::WaitingForStart
+            | GamePhase::Ended
+            | GamePhase::PassingBack
+            | GamePhase::Raising
+            | GamePhase::PendingUndo(_) => return,
+            GamePhase::Bidding if self.state.value == Points(115) => return,
             _ => {}
         }
-        if self.last_state.is_some() {
+        if let Some(last) = &self.last_state {
             legal.push(GameAction {
                 action_type: ActionType::UndoRequest,
-                player: self.last_state.clone().unwrap().player_at_turn.clone(),
+                player: last.player_at_turn,
             });
         }
-        legal
+    }
+
+    fn is_legal(&self, action: &GameAction) -> bool {
+        self.legal_actions.contains(action)
     }
 
     /// Tries creating a new Game with state after applying a given action.
     /// Can fail and does not mutate the existing Game.
     pub fn apply_action(&self, action: GameAction) -> Result<Game, GameError> {
-        if !self.legal_actions.contains(&action) {
+        if !self.is_legal(&action) {
             return Err(GameError::IllegalAction);
         }
-        let (next_game_meta, next_game_state, this_callback, last_state) =
-            action.clone().action_type.apply_action(&action, self);
-
-        // next game Object
-        let this_event = GameEvent {
-            last_action: action,
-            callback: this_callback,
-            player_at_turn: next_game_state.player_at_turn.clone(),
-            time: current_time_string(),
-        };
-        let mut next_all_events: Vec<GameEvent> = self.all_events.clone();
-        next_all_events.push(this_event);
+        // Every action except these two replaces the undo snapshot, so it is cloned only here.
+        let keeps_snapshot = matches!(
+            action.action_type,
+            ActionType::UndoRequest | ActionType::UndoAccept
+        );
+        let mut all_events = Vec::with_capacity(self.all_events.len() + 1);
+        all_events.extend_from_slice(&self.all_events);
         let mut next_game = Game {
-            info: next_game_meta,
-            state: next_game_state,
+            info: self.info.clone(),
+            state: self.state.clone(),
             legal_actions: vec![],
-            last_state,
-            all_events: next_all_events,
+            last_state: if keeps_snapshot {
+                self.last_state.clone()
+            } else {
+                None
+            },
+            all_events,
         };
-        next_game.legal_actions = next_game.legal_actions();
+        next_game.apply_legal(action);
         Ok(next_game)
     }
 
@@ -114,21 +111,50 @@ impl Game {
         self.state.phase == GamePhase::Ended
     }
 
+    /// Applies a legal action in place; panics on an illegal one.
     pub fn apply_action_mut(&mut self, action: GameAction) {
-        if let Ok(next) = self.apply_action(action.clone()) {
-            *self = next;
-        } else {
+        if !self.is_legal(&action) {
             eprintln!("Discarded illegal action: {:?}", action);
             eprintln!("Game state: {:#?}", self);
             panic!();
         }
+        self.apply_legal(action);
+    }
+
+    fn apply_legal(&mut self, action: GameAction) {
+        let callback = self.apply_in_place(&action);
+        self.all_events.push(GameEvent {
+            last_action: action,
+            callback,
+            player_at_turn: self.state.player_at_turn,
+            time: current_time_string(),
+        });
+        let mut legal = std::mem::take(&mut self.legal_actions);
+        legal_actions::recycle(&mut legal);
+        self.push_legal_actions(&mut legal);
+        self.legal_actions = legal;
     }
 }
 
+/// Local wall-clock time as `YYYY-MM-DD HH:MM:SS`. The text is formatted once per second and
+/// per thread and then reused: formatting local time costs more than a whole card play.
 pub fn current_time_string() -> String {
+    thread_local! {
+        static CACHE: RefCell<(u64, String)> = const { RefCell::new((u64::MAX, String::new())) };
+    }
     let system_time = SystemTime::now();
-    let datetime: DateTime<Local> = system_time.into();
-    format!("{}", datetime.format("%Y-%m-%d %T"))
+    let second = system_time
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(u64::MAX - 1);
+    CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.0 != second {
+            let datetime: DateTime<Local> = system_time.into();
+            *cache = (second, format!("{}", datetime.format("%Y-%m-%d %T")));
+        }
+        cache.1.clone()
+    })
 }
 
 #[cfg(test)]
@@ -195,7 +221,7 @@ mod tests {
         assert_eq!(actions.len(), 62);
         let bid140 = GameAction {
             action_type: ActionType::NewBid(140),
-            player: game.state.player_at_turn.clone(),
+            player: game.state.player_at_turn,
         };
         game = game.apply_action(bid140).ok().unwrap();
         let forbidden_action = actions.pop().unwrap();
@@ -319,58 +345,58 @@ mod tests {
 
         game.state.started = true;
         game.state.phase = GamePhase::StartTrick;
-        game.state.player_at_turn = p0.clone();
+        game.state.player_at_turn = p0;
         game.legal_actions = game.legal_actions();
 
         assert!(game.legal_actions.contains(&GameAction {
             action_type: ActionType::AnnounceTrump(Suit::Red),
-            player: p0.clone(),
+            player: p0,
         }));
         assert!(game.legal_actions.contains(&GameAction {
             action_type: ActionType::Question(QuestionType::Yours),
-            player: p0.clone(),
+            player: p0,
         }));
 
         game = game
             .apply_action(GameAction {
                 action_type: ActionType::Question(QuestionType::Yours),
-                player: p0.clone(),
+                player: p0,
             })
             .unwrap();
         assert_eq!(
-            game.state.player_at_place(p0.clone()).trump,
+            game.state.player_at_place(p0).trump,
             PlayerTrumpPossibilities::Yours
         );
 
         game.state.phase = GamePhase::StartTrick;
-        game.state.player_at_turn = p0.clone();
+        game.state.player_at_turn = p0;
         game.legal_actions = game.legal_actions();
         assert!(game.legal_actions.contains(&GameAction {
             action_type: ActionType::Question(QuestionType::Yours),
-            player: p0.clone(),
+            player: p0,
         }));
         assert!(!game.legal_actions.contains(&GameAction {
             action_type: ActionType::AnnounceTrump(Suit::Red),
-            player: p0.clone(),
+            player: p0,
         }));
 
         game = game
             .apply_action(GameAction {
                 action_type: ActionType::Question(QuestionType::YourHalf(Suit::Green)),
-                player: p0.clone(),
+                player: p0,
             })
             .unwrap();
         assert_eq!(
-            game.state.player_at_place(p0.clone()).trump,
+            game.state.player_at_place(p0).trump,
             PlayerTrumpPossibilities::Ours
         );
 
         game.state.phase = GamePhase::StartTrick;
-        game.state.player_at_turn = p0.clone();
+        game.state.player_at_turn = p0;
         game.legal_actions = game.legal_actions();
         assert!(!game.legal_actions.contains(&GameAction {
             action_type: ActionType::Question(QuestionType::Yours),
-            player: p0.clone(),
+            player: p0,
         }));
         assert!(game.legal_actions.contains(&GameAction {
             action_type: ActionType::Question(QuestionType::YourHalf(Suit::Red)),

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::{Error, ErrorKind};
+use std::io::Error;
 use std::iter::zip;
 
 use serde::Deserialize;
@@ -13,7 +13,7 @@ use crate::game::Game;
 
 pub fn parse_card(card: String) -> Result<Card, Error> {
     if card.len() != 3 {
-        return Err(Error::new(ErrorKind::Other, "wrong card format"));
+        return Err(Error::other("wrong card format"));
     }
     let suit_char = card.chars().next().unwrap();
     let value_char = card.chars().last().unwrap();
@@ -39,7 +39,7 @@ pub fn parse_card(card: String) -> Result<Card, Error> {
     }
 
     if value.is_none() || suit.is_none() {
-        return Err(Error::new(ErrorKind::Other, "Wrong card format"));
+        return Err(Error::other("Wrong card format"));
     }
 
     Ok(Card {
@@ -53,6 +53,7 @@ pub fn parse_cards(cards: Vec<String>) -> Vec<Card> {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct LegacyGameFormat {
     /// The id of the game found in '_id.$oid'
     #[serde(rename = "_id")]
@@ -73,10 +74,10 @@ pub struct LegacyGameFormat {
 }
 
 fn parse_action(action: String) -> Result<GameAction, Error> {
-    let err = Err(Error::new(
-        ErrorKind::Other,
-        format!("The action {} could not be parsed.", action),
-    ));
+    let err = Err(Error::other(format!(
+        "The action {} could not be parsed.",
+        action
+    )));
 
     let parts: Vec<&str> = action.split(',').collect();
     if parts.len() != 3 {

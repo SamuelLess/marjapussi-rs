@@ -54,17 +54,23 @@ pub struct GameInfoPlayer {
 
 impl GameInfoPlayer {
     pub fn from_game(game: Game, place: PlaceAtTable) -> Self {
+        let mut meta_info = game.info.clone();
+        for (seat, cards) in meta_info.player_start_cards.iter_mut().enumerate() {
+            if !game.state.started || seat != place.0 as usize {
+                cards.clear();
+            }
+        }
         GameInfoPlayer {
-            meta_info: game.info.clone(),
+            meta_info,
             players_pressed_start: game.state.players_started(),
-            players_from_perspective: game.state.players_perspective(place.clone()),
+            players_from_perspective: game.state.players_perspective(place),
             player_at_turn: game
                 .state
-                .player_at_place(game.state.player_at_turn.clone())
+                .player_at_place(game.state.player_at_turn)
                 .name
                 .clone(),
             own_cards: match game.state.started {
-                true => Some(game.state.player_at_place(place.clone()).cards.clone()),
+                true => Some(game.state.player_at_place(place).cards.clone()),
                 false => None,
             },
             players_cards_number_perspective: game.state.players_perspective_cards(place),
@@ -83,7 +89,12 @@ impl GameInfoPlayer {
                     }
                 }
             },
-            legal_actions: game.legal_actions.clone(),
+            legal_actions: game
+                .legal_actions
+                .iter()
+                .filter(|a| a.player == place)
+                .cloned()
+                .collect(),
         }
     }
 }
@@ -116,7 +127,7 @@ impl From<Game> for GameFinishedInfo {
         let mut players_points = [Points(0); 4];
         let mut players_tricks: [Vec<FinishedTrick>; 4] = [vec![], vec![], vec![], vec![]];
         for trick in &game.state.all_tricks {
-            players_tricks[trick.winner.0 as usize].push(trick.clone());
+            players_tricks[trick.winner.0 as usize].push(*trick);
             players_points[trick.winner.0 as usize] += trick.points;
         }
         let tricks_party_zero = players_tricks[0].len() + players_tricks[2].len();
@@ -132,12 +143,11 @@ impl From<Game> for GameFinishedInfo {
             let mut passed_back: Option<Vec<Card>> = None;
             for event in &game.all_events {
                 if ActionType::NewBid(game.state.value.0) == event.last_action.action_type {
-                    playing_player = event.last_action.player.clone();
+                    playing_player = event.last_action.player;
                     playing_party = Some(event.last_action.player.party());
                 }
                 if let Some(GameCallback::NewTrump(suit)) = event.callback {
-                    players_points[event.last_action.player.clone().0 as usize] +=
-                        points_pair(suit);
+                    players_points[event.last_action.player.0 as usize] += points_pair(suit);
                 }
                 if let ActionType::Pass(cards) = event.last_action.action_type.clone() {
                     if passed_forth.is_none() {
@@ -170,8 +180,8 @@ impl From<Game> for GameFinishedInfo {
 
             after_passing = Some(cards_after_passing);
 
-            let points_party = players_points[playing_party.clone().unwrap().0 as usize]
-                + players_points[playing_party.clone().unwrap().partner().0 as usize];
+            let points_party = players_points[playing_party.unwrap().0 as usize]
+                + players_points[playing_party.unwrap().partner().0 as usize];
             won = Some(points_party >= game.state.value);
         }
 

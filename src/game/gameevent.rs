@@ -24,10 +24,10 @@ pub enum GameEventPlayer {
 }
 
 /// Internal information after each action, i.e. questions, answers and trump changes.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub enum GameCallback {
     NewTrump(Suit),
-    /// When asked again for half but is already trump
+    /// A repeated half question confirms a previously announced suit; current trump is unchanged.
     StillTrump(Suit),
     NoHalf(Suit),
     OnlyHalf(Suit),
@@ -55,13 +55,13 @@ pub enum ActionType {
     UndoAccept,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum QuestionType {
     Yours,
     YourHalf(Suit),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum AnswerType {
     YesPair(Suit),
     NoPair,
