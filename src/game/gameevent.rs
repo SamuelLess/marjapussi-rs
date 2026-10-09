@@ -27,7 +27,7 @@ pub enum GameEventPlayer {
 #[derive(Debug, Clone, Serialize)]
 pub enum GameCallback {
     NewTrump(Suit),
-    /// When asked again for half but is already trump
+    /// A repeated half question confirms a previously announced suit; current trump is unchanged.
     StillTrump(Suit),
     NoHalf(Suit),
     OnlyHalf(Suit),

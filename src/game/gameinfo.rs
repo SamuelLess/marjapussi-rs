@@ -54,8 +54,14 @@ pub struct GameInfoPlayer {
 
 impl GameInfoPlayer {
     pub fn from_game(game: Game, place: PlaceAtTable) -> Self {
+        let mut meta_info = game.info.clone();
+        for (seat, cards) in meta_info.player_start_cards.iter_mut().enumerate() {
+            if !game.state.started || seat != place.0 as usize {
+                cards.clear();
+            }
+        }
         GameInfoPlayer {
-            meta_info: game.info.clone(),
+            meta_info,
             players_pressed_start: game.state.players_started(),
             players_from_perspective: game.state.players_perspective(place.clone()),
             player_at_turn: game
@@ -67,7 +73,7 @@ impl GameInfoPlayer {
                 true => Some(game.state.player_at_place(place.clone()).cards.clone()),
                 false => None,
             },
-            players_cards_number_perspective: game.state.players_perspective_cards(place),
+            players_cards_number_perspective: game.state.players_perspective_cards(place.clone()),
             game_phase: game.state.phase,
             bidding_history: game.state.bidding_history,
             current_trick: game.state.current_trick,
@@ -83,7 +89,12 @@ impl GameInfoPlayer {
                     }
                 }
             },
-            legal_actions: game.legal_actions.clone(),
+            legal_actions: game
+                .legal_actions
+                .iter()
+                .filter(|a| a.player == place)
+                .cloned()
+                .collect(),
         }
     }
 }

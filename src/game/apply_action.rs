@@ -168,13 +168,12 @@ impl ActionType {
 
                 if cards::halves(partner_cards).contains(&suit) {
                     if next_game_state.trump_called.contains(&suit) {
-                        //if called for second time, can't be excluded
                         this_callback = Some(GameCallback::StillTrump(suit));
                     } else {
                         this_callback = Some(GameCallback::NewTrump(suit));
                         next_game_state.trump_called.push(suit);
+                        next_game_state.trump = Some(suit);
                     }
-                    next_game_state.trump = Some(suit);
                     next_game_state.phase = GamePhase::Trick;
                 } else {
                     this_callback = Some(GameCallback::OnlyHalf(suit));
