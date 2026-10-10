@@ -3,7 +3,6 @@ use std::io::{Read, Write};
 
 use clap::{Arg, Command};
 use indicatif::ProgressIterator;
-use serde_json;
 
 use marjapussi::game::parse::parse_legacy_format;
 use marjapussi::game::parse::LegacyGameFormat;

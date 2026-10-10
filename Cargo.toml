@@ -12,20 +12,25 @@ edition = "2021"
 name = "interactive"
 path = "src/bin/interactive.rs"
 bench = false
+required-features = ["public-api"]
 
 [[bin]]
 name = "parse"
 path = "src/bin/parse_legacy.rs"
 bench = false
+required-features = ["public-api"]
+
+[features]
+default = ["public-api"]
+public-api = ["dep:chrono", "dep:strum", "dep:strum_macros", "dep:serde_json", "dep:clap", "dep:indicatif"]
 
 [dependencies]
-itertools = "0.14.0"
-strum = "0.27.1"
-strum_macros = "0.27.1"
-chrono = "0.4.40"
+strum = { version = "0.27.1", optional = true }
+strum_macros = { version = "0.27.1", optional = true }
+chrono = { version = "0.4.40", optional = true }
 rand = "0.9.0"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", optional = true }
 serde_with = "3.12.0"
-clap = "4.5.32"
-indicatif = "0.17.11"
+clap = { version = "4.5.32", optional = true }
+indicatif = { version = "0.17.11", optional = true }

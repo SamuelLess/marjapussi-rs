@@ -1,51 +1,16 @@
 use std::collections::HashMap;
-use std::io::{Error, ErrorKind};
-use std::iter::zip;
+use std::io::Error;
 
 use serde::Deserialize;
-use strum::IntoEnumIterator;
 
-use crate::game::cards::{Card, Suit, Value};
+use crate::game::cards::{Card, Suit};
 use crate::game::gameevent::{ActionType, AnswerType, GameAction, QuestionType};
 use crate::game::gameinfo::GameFinishedInfo;
 use crate::game::player::PlaceAtTable;
 use crate::game::Game;
 
 pub fn parse_card(card: String) -> Result<Card, Error> {
-    if card.len() != 3 {
-        return Err(Error::new(ErrorKind::Other, "wrong card format"));
-    }
-    let suit_char = card.chars().next().unwrap();
-    let value_char = card.chars().last().unwrap();
-    let suits_str = "gesr".chars();
-    let values_str = "6789UOKZA".chars();
-
-    let mut suit: Option<Suit> = None;
-    let mut value: Option<Value> = None;
-
-    let suits = Suit::iter();
-    let values = Value::iter();
-
-    for (c, s) in zip(suits_str, suits) {
-        if c == suit_char {
-            suit = Some(s);
-        }
-    }
-
-    for (c, v) in zip(values_str, values) {
-        if c == value_char {
-            value = Some(v);
-        }
-    }
-
-    if value.is_none() || suit.is_none() {
-        return Err(Error::new(ErrorKind::Other, "Wrong card format"));
-    }
-
-    Ok(Card {
-        suit: suit.unwrap(),
-        value: value.unwrap(),
-    })
+    card.parse()
 }
 
 pub fn parse_cards(cards: Vec<String>) -> Vec<Card> {
@@ -53,6 +18,7 @@ pub fn parse_cards(cards: Vec<String>) -> Vec<Card> {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct LegacyGameFormat {
     /// The id of the game found in '_id.$oid'
     #[serde(rename = "_id")]
@@ -73,10 +39,10 @@ pub struct LegacyGameFormat {
 }
 
 fn parse_action(action: String) -> Result<GameAction, Error> {
-    let err = Err(Error::new(
-        ErrorKind::Other,
-        format!("The action {} could not be parsed.", action),
-    ));
+    let err = Err(Error::other(format!(
+        "The action {} could not be parsed.",
+        action
+    )));
 
     let parts: Vec<&str> = action.split(',').collect();
     if parts.len() != 3 {
@@ -128,13 +94,10 @@ fn parse_pass(actions: Vec<String>) -> GameAction {
 }
 
 fn parse_suit(suit: &str) -> Suit {
-    match suit {
-        "g" => Suit::Green,
-        "e" => Suit::Acorns,
-        "s" => Suit::Bells,
-        "r" => Suit::Red,
-        _ => Suit::Red,
-    }
+    suit.chars()
+        .next()
+        .and_then(Suit::from_code)
+        .unwrap_or(Suit::Red)
 }
 
 fn parse_ques(action: String) -> ActionType {
@@ -213,6 +176,7 @@ pub fn parse_legacy_format(game_data: LegacyGameFormat) -> Result<GameFinishedIn
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::cards::Value;
     use crate::game::points::Points;
 
     #[test]

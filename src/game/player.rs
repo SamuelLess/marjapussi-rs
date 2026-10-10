@@ -1,3 +1,6 @@
+#![cfg_attr(not(feature = "public-api"), allow(clippy::clone_on_copy))]
+
+use crate::storage::{List, Name};
 use std::fmt::Debug;
 
 use rand::rng;
@@ -6,7 +9,10 @@ use serde::Serialize;
 
 use crate::game::cards::{get_all_cards, Card};
 
-#[derive(Clone, PartialEq, Eq, Serialize)]
+/// Cards dealt to each player.
+pub const HAND_SIZE: usize = 9;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct PlaceAtTable(pub u8);
 
 impl PlaceAtTable {
@@ -32,17 +38,48 @@ impl Debug for PlaceAtTable {
     }
 }
 
-#[derive(Clone)]
 pub struct Player {
-    pub name: String,
+    pub name: Name,
     pub partner: PlaceAtTable,
     pub next_player: PlaceAtTable,
     pub place_at_table: PlaceAtTable,
-    pub cards: Vec<Card>,
+    pub cards: List<Card, 13>,
     last_played: Option<Card>,
+    #[cfg(feature = "public-api")]
     pub tricks: Vec<Vec<Card>>,
     pub trump: PlayerTrumpPossibilities,
     pub bidding: bool,
+}
+
+impl Clone for Player {
+    fn clone(&self) -> Self {
+        Player {
+            name: self.name.clone(),
+            partner: self.partner,
+            next_player: self.next_player,
+            place_at_table: self.place_at_table,
+            cards: self.cards.clone(),
+            last_played: self.last_played,
+            #[cfg(feature = "public-api")]
+            tricks: self.tricks.clone(),
+            trump: self.trump,
+            bidding: self.bidding,
+        }
+    }
+
+    /// Reuses the name and card buffers (see `GameState::clone_from`).
+    fn clone_from(&mut self, source: &Self) {
+        self.name.clone_from(&source.name);
+        self.partner = source.partner;
+        self.next_player = source.next_player;
+        self.place_at_table = source.place_at_table;
+        self.cards.clone_from(&source.cards);
+        self.last_played = source.last_played;
+        #[cfg(feature = "public-api")]
+        self.tricks.clone_from(&source.tricks);
+        self.trump = source.trump;
+        self.bidding = source.bidding;
+    }
 }
 
 impl PartialEq for Player {
@@ -71,13 +108,13 @@ impl Player {
         self.last_played = Some(card);
     }
     pub fn undo_play_card(&mut self) {
-        if let Some(last_card) = self.last_played.clone() {
+        if let Some(last_card) = self.last_played {
             self.cards.push(last_card)
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayerTrumpPossibilities {
     Own,
     Yours,
@@ -88,14 +125,17 @@ pub enum PlayerTrumpPossibilities {
 Creates a Single Player without partner or next_player
  */
 fn create_player(name: String, cards: Vec<Card>, place: u8) -> Player {
+    #[cfg(not(feature = "public-api"))]
+    let name = name.into();
     Player {
         name,
         bidding: true,
         next_player: PlaceAtTable(place).partner(),
         partner: PlaceAtTable(place).partner(),
         place_at_table: PlaceAtTable(place),
-        cards,
+        cards: cards.into_iter().collect(),
         last_played: None,
+        #[cfg(feature = "public-api")]
         tricks: vec![],
         trump: PlayerTrumpPossibilities::Own,
     }
@@ -106,15 +146,7 @@ pub fn create_players(names: [String; 4], cards: Option<[Vec<Card>; 4]>) -> [Pla
         //random shuffled cads
         let mut deck = get_all_cards();
         deck.shuffle(&mut rng());
-        let mut cards: [Vec<Card>; 4] = [vec![], vec![], vec![], vec![]];
-        for i in 0..4 {
-            let mut one_players_cards = vec![];
-            for c in 0..9 {
-                one_players_cards.push(deck.get(i * 9 + c).unwrap().clone());
-            }
-            cards[i] = one_players_cards;
-        }
-        cards
+        [0, 1, 2, 3].map(|i| deck[i * HAND_SIZE..(i + 1) * HAND_SIZE].to_vec())
     });
 
     let p0 = create_player(names[0].clone(), players_cards[0].clone(), 0);

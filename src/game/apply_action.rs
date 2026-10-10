@@ -1,12 +1,18 @@
-use crate::game::cards::{high_card, Card};
+use crate::bits::{self, CardSet};
+use crate::game::cards::Card;
+#[cfg(feature = "public-api")]
+use crate::game::current_time_string;
 use crate::game::gameevent::{ActionType, AnswerType, GameAction, GameCallback, QuestionType};
+#[cfg(feature = "public-api")]
 use crate::game::gameinfo::GameMetaInfo;
 use crate::game::gamestate::{FinishedTrick, GamePhase, GameState};
 use crate::game::player::PlayerTrumpPossibilities;
-use crate::game::points::{points_trick, Points};
-use crate::game::{cards, current_time_string, Game};
+use crate::game::points::{Points, CARD_POINTS, LAST_TRICK_BONUS};
+use crate::game::Game;
 
+#[cfg(feature = "public-api")]
 impl ActionType {
+    /// Returns the next meta info, state, callback and undo snapshot without changing `game`.
     pub fn apply_action(
         self,
         action: &GameAction,
@@ -17,244 +23,258 @@ impl ActionType {
         Option<GameCallback>,
         Option<GameState>,
     ) {
-        let mut next_game_meta = game.info.clone();
-        let mut next_game_state = game.state.clone();
-        let mut this_callback: Option<GameCallback> = None;
-        let mut last_state: Option<GameState> = None;
-        match self {
+        let action = GameAction {
+            action_type: self,
+            player: action.player,
+        };
+        let mut next = Game {
+            info: game.info.clone(),
+            state: game.state.clone(),
+            legal_actions: vec![],
+            last_state: game.last_state.clone(),
+            all_events: vec![],
+        };
+        let callback = next.apply_in_place(&action);
+        (next.info, next.state, callback, next.last_state)
+    }
+}
+
+impl Game {
+    /// Applies a legal action to `info`, `state` and `last_state` in place and returns the
+    /// callback. `last_state` (the undo snapshot) is the state before a bid or a card, is kept
+    /// by undo requests and accepts, and is cleared by every other action.
+    pub(crate) fn apply_in_place(&mut self, action: &GameAction) -> Option<GameCallback> {
+        let mut callback = None;
+        let state = &mut self.state;
+        match action.action_type {
             ActionType::Start => {
-                let mut has_started = false;
-                for player in game.state.players_started.clone() {
-                    if player == action.player.clone() {
-                        has_started = true;
+                if !state.players_started.contains(&action.player) {
+                    state.players_started.push(action.player);
+                }
+                if state.players_started.len() == 4 {
+                    state.started = true;
+                    #[cfg(feature = "public-api")]
+                    {
+                        self.info.start_time = Some(current_time_string());
                     }
+                    state.phase = GamePhase::Bidding;
                 }
-                if !has_started {
-                    next_game_state.players_started.push(action.player.clone());
-                }
-                if next_game_state.players_started.len() == 4 {
-                    next_game_state.started = true;
-                    next_game_meta.start_time = Some(current_time_string());
-                    next_game_state.phase = GamePhase::Bidding;
-                }
+                self.last_state = None;
             }
-            ActionType::NewBid(value) => 'newbid: {
-                last_state = Some(next_game_state.clone());
-                next_game_state
+            ActionType::NewBid(value) => {
+                snapshot(&mut self.last_state, state);
+                state
                     .bidding_history
-                    .push((action.action_type.clone(), action.player.clone()));
-
-                next_game_state.value = Points(value);
-                if next_game_state.phase == GamePhase::Raising {
-                    next_game_state.phase = GamePhase::Trick;
-                    break 'newbid;
-                }
-
-                let mut next_player = next_game_state.player_at_turn.next();
-
-                while !next_game_state.player_at_place(next_player.clone()).bidding {
-                    next_player = next_player.next();
-                }
-                if next_player == next_game_state.player_at_turn {
-                    //same player can't bid against himself
-                    next_game_state.phase = GamePhase::PassingForth;
-                    next_game_state.player_at_turn = next_game_state.player_at_turn.partner();
-                    break 'newbid;
+                    .push((action.action_type.to_owned(), action.player));
+                state.value = Points(value);
+                if state.phase == GamePhase::Raising {
+                    state.phase = GamePhase::Trick;
                 } else {
-                    // continue bidding
-                    next_game_state.player_at_turn = next_player.clone();
+                    let mut next_player = state.player_at_turn.next();
+                    while !state.player_at_place(next_player).bidding {
+                        next_player = next_player.next();
+                    }
+                    if next_player == state.player_at_turn {
+                        //same player can't bid against himself
+                        state.phase = GamePhase::PassingForth;
+                        state.player_at_turn = state.player_at_turn.partner();
+                    } else {
+                        // continue bidding
+                        state.player_at_turn = next_player;
+                    }
                 }
             }
             ActionType::StopBidding => {
-                last_state = Some(next_game_state.clone());
-                next_game_state
+                snapshot(&mut self.last_state, state);
+                state
                     .bidding_history
-                    .push((action.action_type.clone(), action.player.clone()));
-                next_game_state.player_at_turn_mut().bidding = false;
-                next_game_state.bidding_players -= 1;
-                let mut next_player = next_game_state.player_at_turn.next();
-                if next_game_state.bidding_players >= 1 {
-                    while !next_game_state.player_at_place(next_player.clone()).bidding {
+                    .push((action.action_type.to_owned(), action.player));
+                state.player_at_turn_mut().bidding = false;
+                state.bidding_players -= 1;
+                let mut next_player = state.player_at_turn.next();
+                if state.bidding_players >= 1 {
+                    while !state.player_at_place(next_player).bidding {
                         next_player = next_player.next();
                     }
                 }
-                next_game_state.player_at_turn = next_player.clone();
+                state.player_at_turn = next_player;
 
                 //bidding ends
-                if next_game_state.bidding_players == 1 && next_game_state.value > Points(115) {
-                    next_game_state.phase = GamePhase::PassingForth;
-
-                    for player in &next_game_state.players {
+                if state.bidding_players == 1 && state.value > Points(115) {
+                    state.phase = GamePhase::PassingForth;
+                    for player in &state.players {
                         if player.bidding {
-                            next_game_state.player_at_turn = player.place_at_table.partner();
+                            state.player_at_turn = player.place_at_table.partner();
                         }
                     }
                 }
-                if next_game_state.bidding_players == 0 {
+                if state.bidding_players == 0 {
                     // nobody takes game
-                    next_game_state.phase = GamePhase::Trick;
+                    state.phase = GamePhase::Trick;
                 }
             }
-            ActionType::Pass(cards) => {
-                {
-                    let giver = next_game_state.player_at_place_mut(action.player.clone());
-                    giver.cards.retain(|x| !cards.contains(x));
-                }
-                {
-                    let receiver = next_game_state.player_at_place_mut(action.player.partner());
-                    receiver.cards.extend(cards);
-                }
-
-                if next_game_state.phase == GamePhase::PassingBack {
-                    next_game_state.phase = GamePhase::Raising;
+            ActionType::Pass(ref cards) => {
+                state
+                    .player_at_place_mut(action.player)
+                    .cards
+                    .retain(|x| !cards.contains(x));
+                state
+                    .player_at_place_mut(action.player.partner())
+                    .cards
+                    .extend_from_slice(cards);
+                if state.phase == GamePhase::PassingBack {
+                    state.phase = GamePhase::Raising;
                 } else {
-                    next_game_state.phase = GamePhase::PassingBack;
-                    next_game_state.player_at_turn = action.player.partner();
+                    state.phase = GamePhase::PassingBack;
+                    state.player_at_turn = action.player.partner();
                 };
+                self.last_state = None;
             }
             ActionType::CardPlayed(card) => {
-                last_state = Some(next_game_state.clone());
-                act_card(card.clone(), &mut next_game_state);
-                next_game_state
-                    .player_at_place_mut(action.player.clone())
-                    .play_card(card);
-                if next_game_state.player_at_turn().cards.is_empty() {
-                    next_game_state.phase = GamePhase::Ended;
-                    next_game_meta.end_time = Some(current_time_string());
+                snapshot(&mut self.last_state, state);
+                act_card(card, state);
+                state.player_at_place_mut(action.player).play_card(card);
+                if state.player_at_turn().cards.is_empty() {
+                    state.phase = GamePhase::Ended;
+                    #[cfg(feature = "public-api")]
+                    {
+                        self.info.end_time = Some(current_time_string());
+                    }
                 }
             }
             ActionType::AnnounceTrump(suit) => {
                 //can only happen once per suit
-                this_callback = Some(GameCallback::NewTrump(suit));
-                next_game_state.trump_called.push(suit);
-                next_game_state.trump = Some(suit);
-                next_game_state.phase = GamePhase::Trick;
+                callback = Some(GameCallback::NewTrump(suit));
+                state.trump_called.push(suit);
+                state.trump = Some(suit);
+                state.phase = GamePhase::Trick;
+                self.last_state = None;
             }
             ActionType::Question(QuestionType::Yours) => {
-                let asker = next_game_state.player_at_place_mut(action.player.clone());
+                let asker = state.player_at_place_mut(action.player);
                 if asker.trump == PlayerTrumpPossibilities::Own {
                     asker.trump = PlayerTrumpPossibilities::Yours;
                 }
-                next_game_state.phase = GamePhase::AnsweringPair;
-                next_game_state.player_at_turn = next_game_state.player_at_turn.partner();
+                state.phase = GamePhase::AnsweringPair;
+                state.player_at_turn = state.player_at_turn.partner();
+                self.last_state = None;
             }
             ActionType::Question(QuestionType::YourHalf(suit)) => {
                 //can happen multiple times per suit
-                let asker = next_game_state.player_at_place_mut(action.player.clone());
-                asker.trump = PlayerTrumpPossibilities::Ours;
-                next_game_state.phase = GamePhase::AnsweringHalf(suit);
-                next_game_state.player_at_turn = next_game_state.player_at_turn.partner();
+                state.player_at_place_mut(action.player).trump = PlayerTrumpPossibilities::Ours;
+                state.phase = GamePhase::AnsweringHalf(suit);
+                state.player_at_turn = state.player_at_turn.partner();
+                self.last_state = None;
             }
             ActionType::Answer(AnswerType::NoPair) => {
-                next_game_state.phase = GamePhase::Trick;
-                next_game_state.player_at_turn = next_game_state.player_at_turn.partner();
+                state.phase = GamePhase::Trick;
+                state.player_at_turn = state.player_at_turn.partner();
+                self.last_state = None;
             }
             ActionType::Answer(AnswerType::YesPair(suit)) => {
                 //can happen only once per suit
-                this_callback = Some(GameCallback::NewTrump(suit));
-                next_game_state.trump_called.push(suit);
-                next_game_state.trump = Some(suit);
-                next_game_state.phase = GamePhase::Trick;
-                next_game_state.player_at_turn = next_game_state.partner().place_at_table.clone();
+                callback = Some(GameCallback::NewTrump(suit));
+                state.trump_called.push(suit);
+                state.trump = Some(suit);
+                state.phase = GamePhase::Trick;
+                state.player_at_turn = state.partner().place_at_table;
+                self.last_state = None;
             }
             ActionType::Answer(AnswerType::NoHalf(suit)) => {
-                this_callback = Some(GameCallback::NoHalf(suit));
-                next_game_state.phase = GamePhase::Trick;
-                next_game_state.player_at_turn = next_game_state.partner().place_at_table.clone();
+                callback = Some(GameCallback::NoHalf(suit));
+                state.phase = GamePhase::Trick;
+                state.player_at_turn = state.partner().place_at_table;
+                self.last_state = None;
             }
             ActionType::Answer(AnswerType::YesHalf(suit)) => {
                 //can happen multiple times per suit
-                let partner_cards = next_game_state.partner().cards.clone();
-
-                if cards::halves(partner_cards).contains(&suit) {
-                    if next_game_state.trump_called.contains(&suit) {
-                        //if called for second time, can't be excluded
-                        this_callback = Some(GameCallback::StillTrump(suit));
+                let asker_hand = CardSet::from_cards(&state.partner().cards);
+                if !(asker_hand & CardSet::halves(suit)).is_empty() {
+                    if state.trump_called.contains(&suit) {
+                        callback = Some(GameCallback::StillTrump(suit));
                     } else {
-                        this_callback = Some(GameCallback::NewTrump(suit));
-                        next_game_state.trump_called.push(suit);
+                        callback = Some(GameCallback::NewTrump(suit));
+                        state.trump_called.push(suit);
+                        state.trump = Some(suit);
                     }
-                    next_game_state.trump = Some(suit);
-                    next_game_state.phase = GamePhase::Trick;
                 } else {
-                    this_callback = Some(GameCallback::OnlyHalf(suit));
+                    callback = Some(GameCallback::OnlyHalf(suit));
                 }
-                next_game_state.player_at_turn = next_game_state.partner().place_at_table.clone();
-                next_game_state.phase = GamePhase::Trick;
+                state.player_at_turn = state.partner().place_at_table;
+                state.phase = GamePhase::Trick;
+                self.last_state = None;
             }
             ActionType::UndoAccept => {
-                last_state = game.last_state.clone();
-                let mut has_already_accepted = false;
-                for player in game.state.players_accept_undo.clone() {
-                    if player == action.player.clone() {
-                        has_already_accepted = true;
+                if !state.players_accept_undo.contains(&action.player) {
+                    state.players_accept_undo.push(action.player);
+                }
+                if state.players_accept_undo.len() == 2 {
+                    if let Some(mut previous) = self.last_state.take() {
+                        previous.players_accept_undo.clear();
+                        *state = previous;
                     }
-                }
-                if !has_already_accepted {
-                    next_game_state
-                        .players_accept_undo
-                        .push(action.player.clone());
-                }
-                if next_game_state.players_accept_undo.len() == 2 && game.last_state.is_some() {
-                    last_state = None;
-                    next_game_state = game.last_state.clone().unwrap();
-                    next_game_state.players_accept_undo = vec![];
                 }
             }
             ActionType::UndoDecline => {
-                if let GamePhase::PendingUndo(previous_phase) = next_game_state.phase {
-                    next_game_state.phase = *previous_phase;
-                    next_game_state.players_accept_undo = vec![];
+                if let GamePhase::PendingUndo(previous_phase) = &mut state.phase {
+                    let previous = std::mem::replace(&mut **previous_phase, GamePhase::Ended);
+                    state.phase = previous;
+                    state.players_accept_undo.clear();
                 }
+                self.last_state = None;
             }
             ActionType::UndoRequest => {
-                last_state.clone_from(&game.last_state);
                 //last_state is always Some() because otherwise action not legal
-                match game.last_state.clone() {
-                    None => {}
-                    Some(_last) => {
-                        next_game_state.phase =
-                            GamePhase::PendingUndo(Box::new(next_game_state.phase.clone()));
-                    }
+                if self.last_state.is_some() {
+                    let phase = std::mem::replace(&mut state.phase, GamePhase::Ended);
+                    state.phase = GamePhase::PendingUndo(Box::new(phase));
                 }
             }
-        };
-        (next_game_meta, next_game_state, this_callback, last_state)
+        }
+        callback
     }
 }
-pub fn act_card(card: Card, next_game_state: &mut GameState) {
-    if next_game_state.current_trick.len() >= 4 {
-        next_game_state.current_trick = vec![card];
-    } else {
-        next_game_state.current_trick.push(card);
+
+/// Stores `state` as the undo snapshot, reusing the previous snapshot's buffers.
+fn snapshot(last_state: &mut Option<GameState>, state: &GameState) {
+    match last_state {
+        Some(last) => last.clone_from(state),
+        None => *last_state = Some(state.clone()),
     }
-    next_game_state.phase = GamePhase::Trick;
-    next_game_state.player_at_turn = next_game_state.player_at_turn.next();
-    if next_game_state.current_trick.len() == 4 {
-        //determine next player
-        let mut trick: Vec<&Card> = vec![];
-        for c in &next_game_state.current_trick {
-            trick.push(c);
+}
+
+/// Puts `card` into the current trick and, when the trick is full, scores it and gives the
+/// turn to its winner (rule owner: `bits::trick_winner`).
+pub fn act_card(card: Card, next_game_state: &mut GameState) {
+    let state = next_game_state;
+    if state.current_trick.len() >= 4 {
+        state.current_trick.clear();
+    }
+    state.current_trick.push(card);
+    state.phase = GamePhase::Trick;
+    state.player_at_turn = state.player_at_turn.next();
+    if state.current_trick.len() == 4 {
+        let cards: [Card; 4] = [
+            state.current_trick[0],
+            state.current_trick[1],
+            state.current_trick[2],
+            state.current_trick[3],
+        ];
+        let idx = cards.map(|c| bits::index(&c));
+        // After four plays the turn is back at the leader; the winner sits `winner` seats on.
+        let winner = bits::trick_winner(&idx, state.trump);
+        for _ in 0..winner {
+            state.player_at_turn = state.player_at_turn.next();
         }
-        let high_card = high_card(trick.clone(), next_game_state.trump).unwrap();
-        for card in trick {
-            if card == high_card {
-                break;
-            }
-            next_game_state.player_at_turn = next_game_state.player_at_turn.next();
+        state.phase = GamePhase::StartTrick;
+        let mut points: i32 = idx.iter().map(|&i| CARD_POINTS[i as usize] as i32).sum();
+        if state.all_tricks.len() == 8 {
+            points += LAST_TRICK_BONUS;
         }
-        next_game_state.phase = GamePhase::StartTrick;
-        // save trick
-        let cards_in_last_trick: [Card; 4] =
-            next_game_state.current_trick.clone().try_into().unwrap();
-        let mut trick_points = points_trick(cards_in_last_trick.to_vec());
-        if next_game_state.all_tricks.len() == 8 {
-            trick_points += Points(20);
-        }
-        next_game_state.all_tricks.push(FinishedTrick {
-            cards: cards_in_last_trick.clone(),
-            winner: next_game_state.player_at_turn.clone(),
-            points: trick_points,
+        state.all_tricks.push(FinishedTrick {
+            cards,
+            winner: state.player_at_turn,
+            points: Points(points),
         });
     }
 }
